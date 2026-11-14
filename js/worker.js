@@ -82,6 +82,7 @@ self.onmessage = (e) => {
       engine.opts.hfovDeg = opts.hfovDeg; engine.opts.threshold = opts.threshold;
       if (opts.autoFind != null) engine.opts.autoFind = opts.autoFind;
       engine.opts.ballDist = +opts.ballDist || 0;
+      engine.opts.teeSpot = opts.teeSpot || null;
       break;
     case 'track': readTrack(m.track); break;
     case 'frame': onVideoFrame(m.frame); break;

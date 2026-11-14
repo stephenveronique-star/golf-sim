@@ -505,7 +505,12 @@ export class ShotEngine {
     if (this.state === 'armed') return this._armedStep(rec);
     if (this.state === 'waiting') return this._waitingStep(rec);
     // only search by itself when the phone is sideways (landscape)
-    if (this.state === 'idle' && this.opts.autoFind && this.w >= this.h) return this._autoStep(rec, null, 1.0);
+    if (this.state === 'idle' && this.opts.autoFind && this.w >= this.h) {
+      // If the user has shown us their tee spot, only look there.
+      const ts = this.opts.teeSpot;
+      const near = ts ? (k) => Math.hypot(k.x - ts.x * this.w, k.y - ts.y * this.h) < this.w * 0.08 : null;
+      return this._autoStep(rec, near, 1.0);
+    }
     return null;
   }
 

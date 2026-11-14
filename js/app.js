@@ -3,7 +3,7 @@ import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, LM } from './swing.js';
 
-const VERSION = '1.4.1';
+const VERSION = '1.4.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -14,7 +14,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', ballDist: '',
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -264,7 +264,7 @@ const eng = { state: 'idle', fps: 0, procMs: 0, w: 0, h: 0, ball: null, frames: 
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 let setBallSeq = 0;
 const pending = new Map();
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: +S.ballDist || 0 } }); }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: +S.ballDist || 0, teeSpot: S.teeSpot || null } }); }
 sendConfig();
 
 worker.onmessage = (e) => {
@@ -577,6 +577,11 @@ function drawSetup() {
       ctx.fillText(`${c.d.toFixed(0)}px`, x + Math.max(8 * dpr, c.d * k) + 3, y + 4);
     }
   }
+  if (S.teeSpot && eng.w && video.videoWidth >= video.videoHeight) {
+    const k = fit.w / eng.w;
+    ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(126,227,107,0.6)'; ctx.lineWidth = 2 * dpr;
+    ctx.beginPath(); ctx.arc(fit.x + S.teeSpot.x * fit.w, fit.y + S.teeSpot.y * fit.h, eng.w * 0.08 * k, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  }
   if (tapMark && eng.w) {
     const age = performance.now() - tapMark.t;
     if (age > 1500) tapMark = null;
@@ -600,6 +605,9 @@ setupC.addEventListener('click', async (e) => {
   log(`tap at ${px.toFixed(0)},${py.toFixed(0)} → ${b ? 'ball found' : 'NO ball found'}`);
   if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); flashTap(px, py, false); return; }
   flashTap(px, py, true);
+  // remember the tee spot: from now on the app only looks for a ball here
+  S.teeSpot = { x: b.x / eng.w, y: b.y / eng.h }; saveSettings(); sendConfig(); renderTeeChip();
+  log(`tee spot saved at ${(S.teeSpot.x * 100).toFixed(0)}%, ${(S.teeSpot.y * 100).toFixed(0)}% of the picture`);
   updateChips();
 });
 
@@ -1017,6 +1025,9 @@ $('#dClearLog').addEventListener('click', () => { LOG = []; store.set('log', LOG
 function renderDebugChip() { const c = $('#cDebug'); c.textContent = `Show what it sees: ${S.debug === 'on' ? 'on' : 'off'}`; c.classList.toggle('on', S.debug === 'on'); }
 $('#cDebug').addEventListener('click', () => { S.debug = S.debug === 'on' ? 'off' : 'on'; saveSettings(); renderDebugChip(); dbg = null; });
 renderDebugChip();
+function renderTeeChip() { const c = $('#cTee'); c.textContent = S.teeSpot ? '📍 Tee spot saved — tap to clear' : '📍 Tee spot: tap your ball to save it'; c.classList.toggle('on', !!S.teeSpot); }
+$('#cTee').addEventListener('click', () => { if (!S.teeSpot) { toast('Tap your ball on the picture to save your tee spot'); return; } S.teeSpot = null; saveSettings(); sendConfig(); renderTeeChip(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; log('tee spot cleared'); toast('Tee spot cleared — put the ball down and tap it to save a new one'); });
+renderTeeChip();
 
 document.addEventListener('touchend', () => unlockAudio(), { passive: true });
 document.addEventListener('click', () => unlockAudio());
