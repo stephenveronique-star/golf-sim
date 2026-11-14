@@ -101,6 +101,12 @@ body[data-ready=ready] .setup::after { box-shadow: inset 0 0 0 10px #7ee36b; }
 body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .view-toggle { top: auto; bottom: 10px; }
 
+
+.diag img { width: 100%; border-radius: 10px; background: #000; display: block; margin: 6px 0; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+.diag pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.4 ui-monospace, Menlo, monospace; background: #0a140d; border: 1px solid var(--line); border-radius: 10px; padding: 10px; color: #cfe3d4; -webkit-user-select: text; user-select: text; }
+.diag-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.chip.on { color: #6fc3ff; }
+
 /* overlays */
 .overlay { position: fixed; inset: 0; background: rgba(4,10,6,0.82); display: none; z-index: 20; padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px); }
 .overlay.show { display: flex; align-items: center; justify-content: center; }
@@ -123,7 +129,8 @@ body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .clubs button.on small { color: #0b1a0e; }
 
 /* camera setup */
-.setup { position: fixed; inset: 0; z-index: 15; background: #000; display: none; }
+.setup { position: fixed; inset: 0; z-index: 16; background: transparent; display: none; }
+#video.full { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; object-fit: contain; opacity: 1 !important; z-index: 15 !important; background: #000; }
 .setup.show { display: block; }
 .setup canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .setup .hud { position: absolute; left: calc(var(--safe-l) + 10px); top: calc(var(--safe-t) + 10px); right: calc(var(--safe-r) + 10px); display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; pointer-events: none; }
@@ -184,6 +191,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <button class="btn" id="cameraBtn">Camera</button>
     <button class="btn ghost" id="demoBtn" title="Simulated shot">Demo shot</button>
     <button class="icon-btn" id="helpBtn" aria-label="Setup guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg></button>
+    <button class="icon-btn" id="diagBtn" aria-label="Help me fix it" title="Help me fix it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </div>
   <div class="main">
@@ -238,6 +246,8 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="chip" id="cProc">Processing …</div>
     <div class="chip" id="cBall">Ball: tap it</div>
     <button class="chip" id="cLevel">Level: tap to check</button>
+    <button class="chip" id="cDiag">🛠 Help me fix it</button>
+    <button class="chip" id="cDebug">Show what it sees: off</button>
   </div>
   <div class="msg" id="setupMsg">Put a ball down and step back — I’ll find it (or tap it)</div>
   <button class="btn primary done" id="setupDone">Done</button>
@@ -313,6 +323,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <li>Tap <b>Camera</b>, put a ball down and step back. The app finds the ball by itself (or tap it on the screen). When the screen turns <b>green</b> and says <b>“Ready”</b>, hit.</li>
     <li>After each shot the screen goes <b>orange — Tee up</b>. Put the next ball in the same spot; it turns green and says “Ready” again.</li>
     <li>No sound? Check the iPhone's silent switch is off and the volume is up.</li>
+    <li>Something not working? Tap the 🔧 button (or “Help me fix it” on the camera screen) and send the report and pictures to Claude.</li>
   </ol>
   <h3>For good readings</h3>
   <ul>
@@ -326,6 +337,26 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <p>Ball speed and launch angle are measured from the ball's flight across the screen. Direction is estimated from how the ball's size changes as it flies toward or away from the phone, so treat left/right as a guide. Spin, club speed and curve are estimated. Carry and total come from a ball-flight model fitted to tour launch-monitor data, adjusted for your altitude and temperature.</p>
 </div></div>
 
+<!-- diagnostics -->
+<div class="overlay" id="diagSheet"><div class="sheet diag">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Help me fix it</h2>
+  <p class="kv">Save these and send them to Claude. Tap <b>Share</b> (AirDrop to your Mac, or Save to Photos), or press and hold a picture and choose <b>Save to Photos</b>. A normal screenshot of this screen works too.</p>
+  <div class="diag-btns">
+    <button class="btn primary" id="dShareAll">Share report + pictures</button>
+    <button class="btn" id="dCopy">Copy report text</button>
+    <button class="btn" id="dClearLog">Clear log</button>
+  </div>
+  <h3>1 · What the camera sees now</h3>
+  <p class="kv">Green ring = the ball it is watching. Blue rings = things it thinks could be a ball.</p>
+  <img id="dImgNow" alt="Camera snapshot">
+  <h3>2 · Last shot, frame by frame</h3>
+  <img id="dImgShot" alt="Last shot frames">
+  <p class="kv" id="dShotNote"></p>
+  <h3>3 · Report</h3>
+  <pre id="dText"></pre>
+</div></div>
+
 <!-- replay -->
 <div class="overlay" id="replaySheet"><div class="sheet replay">
   <button class="btn ghost close" data-close>Close</button>
@@ -334,6 +365,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <canvas id="replayCanvas"></canvas>
   <div class="ctrl"><button class="btn" id="rPrev">◀</button><input type="range" id="rSlider" min="0" max="0" value="0"><button class="btn" id="rNext">▶</button></div>
   <p class="kv">Green circle = where the ball sat. Yellow = ball found in flight. The line is the measured launch.</p>
+  <button class="btn" id="rDiag">🛠 Send this to Claude</button>
 </div></div>
 
 <div class="toast" id="toast"></div>

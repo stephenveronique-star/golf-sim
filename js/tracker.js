@@ -546,10 +546,10 @@ export class ShotEngine {
     this._cands = [];
     let ev;
     if (!track) {
-      ev = { type: 'missed', reason: 'ball-not-found', frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+      ev = { type: 'missed', reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
       const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg });
-      ev = { type: 'shot', launch, track, frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
+      ev = { type: 'shot', launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }
     this.onEvent(ev);
     return ev;

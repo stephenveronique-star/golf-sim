@@ -1,6 +1,6 @@
 // Capture worker: receives camera frames, converts them to grayscale and runs
 // the ShotEngine off the main thread so no frames are missed.
-import { ShotEngine } from './tracker.js';
+import { ShotEngine, findBallCandidates } from './tracker.js';
 
 let opts = { hfovDeg: 67, threshold: 14, procW: 960 };
 const engine = new ShotEngine({ hfovDeg: opts.hfovDeg, threshold: opts.threshold });
@@ -101,6 +101,19 @@ self.onmessage = (e) => {
       break;
     }
     case 'reset': engine.reset(); status(true); break;
+    case 'debug': {
+      const fr = engine.latest();
+      let cands = [];
+      if (fr) {
+        const dMax = Math.max(12, Math.round(engine.w * 0.03));
+        cands = findBallCandidates(fr.g, engine.w, engine.h, { dMin: Math.max(4, engine.w * 0.005), dMax, contrast: engine.opts.autoContrast ?? 35 })
+          .map((c) => ({ x: c.x, y: c.y, d: c.d, contrast: c.contrast }));
+      }
+      const b = engine.ball;
+      self.postMessage({ type: 'debug', id: m.id, cands, state: engine.state, fps: engine.fps, procMs, w: engine.w, h: engine.h, frames,
+        ball: b ? { x: b.x, y: b.y, d: b.d, contrast: b.contrast } : null, bufLen: engine.buf.length });
+      break;
+    }
     case 'stop': try { reader && reader.cancel(); } catch { /* ignore */ } reader = null; engine.reset(); break;
   }
 };

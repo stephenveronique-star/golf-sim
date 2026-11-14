@@ -1,7 +1,7 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -12,13 +12,27 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on',
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off',
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
 let shots = store.get('shots', []);
 let session = store.get('session', Date.now());
 store.set('session', session);
+// ------------------------------------------------------------ problem log
+let LOG = store.get('log', []);
+let logDirty = false;
+function log(msg) {
+  const d = new Date();
+  const ts = d.toTimeString().slice(0, 8);
+  LOG.push(`${ts} ${msg}`);
+  if (LOG.length > 250) LOG = LOG.slice(-250);
+  if (!logDirty) { logDirty = true; setTimeout(() => { logDirty = false; store.set('log', LOG); }, 1000); }
+}
+window.addEventListener('error', (e) => log(`ERROR ${e.message} @${(e.filename || '').split('/').pop()}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => log(`ERROR (promise) ${e.reason && (e.reason.message || e.reason)}`));
+log(`app opened · ${navigator.userAgent.replace(/^Mozilla\/5.0 /, '').slice(0, 120)}`);
+
 const saveShots = () => { if (shots.length > 3000) shots = shots.slice(-3000); store.set('shots', shots); };
 
 // ------------------------------------------------------------ formatting
@@ -205,17 +219,31 @@ worker.onmessage = (e) => {
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
-  else if (m.type === 'error') console.error('worker:', m.message);
+  else if (m.type === 'error') { console.error('worker:', m.message); log(`ERROR worker: ${m.message}`); }
+  else if (m.type === 'debug') { const r = pendingDebug.get(m.id); pendingDebug.delete(m.id); if (r) r(m); }
 };
+const pendingDebug = new Map();
+let debugSeq = 0;
+function workerDebug() {
+  const id = ++debugSeq;
+  return new Promise((res) => { pendingDebug.set(id, res); worker.postMessage({ cmd: 'debug', id }); setTimeout(() => { if (pendingDebug.has(id)) { pendingDebug.delete(id); res(null); } }, 1500); });
+}
 function setBall(x, y) {
   const id = ++setBallSeq;
   return new Promise((res) => { pending.set(id, res); worker.postMessage({ cmd: 'setBall', x, y, id }); });
 }
 
+function droppedFrames(ev) {
+  if (!ev.frames || ev.frames.length < 3) return 0;
+  const ts = ev.frames.map((f) => f.t), d = ts.slice(1).map((t, i) => t - ts[i]).sort((p, q) => p - q)[Math.floor(ts.length / 2)];
+  let n = 0; for (let i = 1; i < ts.length; i++) n += Math.max(0, Math.round((ts[i] - ts[i - 1]) / d) - 1);
+  return n;
+}
 function onEngineEvent(ev) {
   try { window.__golf?.onEvent?.(ev); } catch { /* test hook */ }
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
+    log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
     setStatus('ready', 'Ready — hit away');
     $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
     updateReady();
@@ -225,11 +253,14 @@ function onEngineEvent(ev) {
   } else if (ev.type === 'shot') {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
+    const L = ev.launch;
+    log(`SHOT speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if (ev.launch.speed >= 3) recordShot(ev.launch);
   } else if (ev.type === 'missed') {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     say('Missed that one');
+    log(`MISSED ball left the tee but wasn't found in flight · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     shots.push({ id: Date.now(), ts: Date.now(), session, club: S.club, miss: true }); saveShots(); renderList();
     toast('Ball was struck but not seen in flight. Tap “Replay last” to see what the camera saw.', 5000);
     beep(300, 0.25);
@@ -263,6 +294,7 @@ async function startCamera() {
     return false;
   }
   const track = stream.getVideoTracks()[0];
+  try { const st = track.getSettings(); log(`camera started ${st.width}×${st.height} @ ${st.frameRate} fps (${track.label || 'camera'})`); } catch { /* ignore */ }
   try {
     const caps = track.getCapabilities ? track.getCapabilities() : {};
     const maxFps = caps.frameRate?.max || 60;
@@ -285,6 +317,7 @@ async function startCamera() {
     startVideoPath();
   }
   startWatchdog();
+  log(`capture path: ${mode}`);
   $('#pip').hidden = false;
   setStatus('busy', 'Looking for the ball');
   populateCameras();
@@ -360,8 +393,8 @@ function startWatchdog() {
     if (!running) { clearInterval(watchdog); return; }
     if (eng.frames === last) still++; else { still = 0; last = eng.frames; }
     if (still >= 3 && video.videoWidth) {
-      if (!switched && mode !== 'video') { switched = true; console.warn('no frames from', mode, '- switching to video'); startVideoPath(); still = 0; }
-      else if (still === 6) toast('The camera picture isn’t reaching the ball tracker. Close the app fully and open it again.', 6000);
+      if (!switched && mode !== 'video') { switched = true; console.warn('no frames from', mode, '- switching to video'); log(`no frames from ${mode} — switched to video path`); startVideoPath(); still = 0; }
+      else if (still === 6) log('STILL no frames reaching the tracker'), toast('The camera picture isn’t reaching the ball tracker. Close the app fully and open it again.', 6000);
     }
   }, 700);
 }
@@ -379,8 +412,8 @@ async function populateCameras() {
 let lastPip = 0, lastChips = 0;
 function drawLoop(now) {
   if (!running) return;
-  if ($('#setup').classList.contains('show')) drawSetup();
-  else if (now - lastPip > 66) { lastPip = now; drawPip(); }
+  if ($('#setup').classList.contains('show')) { if (now - lastPip > 100) { lastPip = now; drawSetup(); } }
+  else if (now - lastPip > 100) { lastPip = now; drawPip(); }
   if (now - lastChips > 400) { lastChips = now; updateChips(); }
   requestAnimationFrame(drawLoop);
 }
@@ -413,8 +446,7 @@ function drawSetup() {
   const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
   const sc = Math.min(cw / vw, ch / vh);
   fit = { x: (cw - vw * sc) / 2, y: (ch - vh * sc) / 2, w: vw * sc, h: vh * sc, dpr };
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
-  if (video.videoWidth) ctx.drawImage(video, fit.x, fit.y, fit.w, fit.h);
+  ctx.clearRect(0, 0, cw, ch); // the live video shows underneath; only the markings are drawn here
   ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
   for (const f of [0.25, 0.75]) { ctx.beginPath(); ctx.moveTo(fit.x + fit.w * f, fit.y); ctx.lineTo(fit.x + fit.w * f, fit.y + fit.h); ctx.stroke(); }
   if (eng.ball && eng.w) {
@@ -424,6 +456,15 @@ function drawSetup() {
     ctx.beginPath(); ctx.arc(bx, by, Math.max(10 * dpr, eng.ball.d * k * 1.2), 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(126,227,107,0.5)'; ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.moveTo(fit.x, by); ctx.lineTo(fit.x + fit.w, by); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (S.debug === 'on' && dbg && eng.w) {
+    const k = fit.w / eng.w;
+    ctx.strokeStyle = '#6fc3ff'; ctx.lineWidth = 2 * dpr; ctx.fillStyle = '#6fc3ff'; ctx.font = `${11 * dpr}px system-ui`;
+    for (const c of dbg.cands || []) {
+      const x = fit.x + c.x * k, y = fit.y + c.y * k;
+      ctx.beginPath(); ctx.arc(x, y, Math.max(8 * dpr, c.d * k), 0, Math.PI * 2); ctx.stroke();
+      ctx.fillText(`${c.d.toFixed(0)}px`, x + Math.max(8 * dpr, c.d * k) + 3, y + 4);
+    }
   }
   if (tapMark && eng.w) {
     const age = performance.now() - tapMark.t;
@@ -439,27 +480,37 @@ function drawSetup() {
 }
 setupC.addEventListener('click', async (e) => {
   if (!running) return;
-  if (!eng.w) { toast('Camera is still starting — try again in a second'); return; }
+  if (!eng.w) { toast('Camera is still starting — try again in a second'); log('tap ignored: no frames yet'); return; }
   const r = setupC.getBoundingClientRect();
   const x = (e.clientX - r.left) * fit.dpr, y = (e.clientY - r.top) * fit.dpr;
   const px = ((x - fit.x) / fit.w) * eng.w, py = ((y - fit.y) / fit.h) * eng.h;
   if (px < 0 || py < 0 || px > eng.w || py > eng.h) return;
   const b = await setBall(px, py);
+  log(`tap at ${px.toFixed(0)},${py.toFixed(0)} → ${b ? 'ball found' : 'NO ball found'}`);
   if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); flashTap(px, py, false); return; }
   flashTap(px, py, true);
   updateChips();
 });
 
 let tapMark = null;
+let dbg = null, dbgBusy = false;
+setInterval(async () => {
+  if (S.debug !== 'on' || !running || dbgBusy || !$('#setup').classList.contains('show')) return;
+  dbgBusy = true; dbg = await workerDebug(); dbgBusy = false;
+}, 400);
 function flashTap(x, y, ok) { tapMark = { x, y, ok, t: performance.now() }; }
 
+let lastReadySt = null;
 function updateReady() {
   const st = !running ? 'off' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
   document.body.dataset.ready = st;
   const el = $('#readyLight');
   el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : '';
   el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : '';
-  if (st === 'look' && $('#setup').classList.contains('show') && !tapMark) $('#setupMsg').textContent = 'Put a ball down and step back — I’ll find it (or tap it)';
+  if ($('#setup').classList.contains('show') && st !== lastReadySt) {
+    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : 'Put a ball down and step back — I’ll find it (or tap it)';
+  }
+  lastReadySt = st;
 }
 
 function updateChips() {
@@ -503,10 +554,12 @@ $('#cLevel').addEventListener('click', async () => {
 
 function openSetup() {
   $('#setup').classList.add('show');
+  video.classList.add('full');
+  lastReadySt = null; updateReady();
   $('#setupMsg').textContent = eng.state === 'armed' ? 'Ready — hit away (tap the ball again to re-mark it)' : 'Put a ball down and step back — I’ll find it (or tap it)';
   if (!running) startCamera();
 }
-function closeSetup() { $('#setup').classList.remove('show'); }
+function closeSetup() { $('#setup').classList.remove('show'); video.classList.remove('full'); }
 $('#setupDone').addEventListener('click', closeSetup);
 $('#cameraBtn').addEventListener('click', () => { unlockAudio(); openSetup(); });
 
@@ -595,6 +648,128 @@ function applyUnits() {
   const last = sessionShots().filter((s) => !s.miss).pop();
   if (last) showNumbers(last); else $('#uCarry').textContent = dUnit();
 }
+
+// ------------------------------------------------------------ help me fix it
+const MONO = '13px ui-monospace, Menlo, monospace';
+function grayToCanvas(fr, w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); const img = ctx.createImageData(w, h);
+  for (let i = 0, j = 0; j < fr.length; i += 4, j++) { const v = fr[j]; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255; }
+  ctx.putImageData(img, 0, 0); return c;
+}
+function canvasBlob(c) { return new Promise((res) => c.toBlob((b) => res(b), 'image/jpeg', 0.85)); }
+
+function reportText(d) {
+  const L = [];
+  const st = d || eng;
+  L.push(`GOLF SIM REPORT · ${new Date().toLocaleString()}`);
+  L.push(`version ${VERSION} · capture ${mode || 'not started'} · camera ${running ? 'on' : 'off'}`);
+  L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
+  L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
+  L.push(`settings: club ${S.club} · ${S.dist}/${S.speed} · alt ${S.altitude} m · ${S.tempC}°C · fov ${S.hfov}° · width ${S.procW} · sensitivity ${S.threshold} · auto-find ${S.autoFind} · speed adj ${S.speedCal}% · aim ${S.aim}°`);
+  L.push(`screen ${innerWidth}×${innerHeight} · ${screen.orientation ? screen.orientation.type : ''} · ${navigator.userAgent}`);
+  const ss = sessionShots().slice(-8);
+  if (ss.length) {
+    L.push('last shots:');
+    for (const s of ss) L.push(s.miss ? `  ${s.club} not read` : `  ${s.club}${s.demo ? ' (demo)' : ''} ${(s.speed).toFixed(1)} m/s ${s.launch.toFixed(1)}° dir ${s.dir.toFixed(1)}° → carry ${s.carry.toFixed(0)} m`);
+  }
+  L.push('log (newest last):');
+  for (const l of LOG.slice(-60)) L.push('  ' + l);
+  return L.join('\n');
+}
+
+async function snapshotNow(d) {
+  if (!running || !video.videoWidth) return null;
+  const W = 1280, H = Math.round((video.videoHeight / video.videoWidth) * W);
+  const c = document.createElement('canvas'); c.width = W; c.height = H + 120;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(video, 0, 0, W, H);
+  const aw = (d && d.w) || eng.w;
+  if (aw) {
+    const k = W / aw;
+    if (d && d.cands) { ctx.strokeStyle = '#6fc3ff'; ctx.lineWidth = 3; ctx.fillStyle = '#6fc3ff'; ctx.font = '16px system-ui'; for (const cd of d.cands) { ctx.beginPath(); ctx.arc(cd.x * k, cd.y * k, Math.max(10, cd.d * k), 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${cd.d.toFixed(0)}px c${cd.contrast.toFixed(0)}`, cd.x * k + 14, cd.y * k - 10); } }
+    const b = (d && d.ball) || eng.ball;
+    if (b) { ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(b.x * k, b.y * k, Math.max(14, b.d * k * 1.4), 0, Math.PI * 2); ctx.stroke(); }
+  }
+  ctx.fillStyle = '#fff'; ctx.font = MONO.replace('13px', '18px');
+  const lines = reportText(d).split('\n').slice(1, 5);
+  lines.forEach((l, i) => ctx.fillText(l.slice(0, 120), 12, H + 28 + i * 24));
+  return c;
+}
+
+function shotSheet() {
+  const ev = lastCapture;
+  if (!ev || !ev.frames || !ev.frames.length) return null;
+  const fr = ev.frames;
+  let start = 0;
+  if (ev.track && ev.track.pts.length) {
+    const i = fr.findIndex((f) => Math.abs(f.t - ev.track.pts[0].t) < 1e-6);
+    start = Math.max(0, i - 3);
+  } else start = Math.max(0, Math.floor(fr.length / 2) - 6);
+  const pick = fr.slice(start, start + 12);
+  const cols = 4, rows = Math.ceil(pick.length / cols);
+  const tw = 480, th = Math.round((ev.h / ev.w) * tw);
+  const c = document.createElement('canvas'); c.width = cols * tw; c.height = rows * th + 40;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
+  const k = tw / ev.w;
+  pick.forEach((f, i) => {
+    const x0 = (i % cols) * tw, y0 = Math.floor(i / cols) * th;
+    ctx.drawImage(grayToCanvas(f.g, ev.w, ev.h), x0, y0, tw, th);
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, tw, th); ctx.clip();
+    ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x0 + ev.tee.x * k, y0 + ev.tee.y * k, Math.max(6, ev.tee.d * k * 1.4), 0, Math.PI * 2); ctx.stroke();
+    if (ev.track) for (const p of ev.track.pts) if (Math.abs(p.t - f.t) < 1e-6) { ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x0 + p.x * k, y0 + p.y * k, Math.max(7, p.d * k * 1.5), 0, Math.PI * 2); ctx.stroke(); }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x0, y0, 150, 22);
+    ctx.fillStyle = '#fff'; ctx.font = MONO; ctx.fillText(`#${start + i + 1} +${((f.t - fr[0].t) * 1000).toFixed(0)}ms`, x0 + 6, y0 + 16);
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, y0 + 0.5, tw - 1, th - 1);
+  });
+  ctx.fillStyle = '#fff'; ctx.font = MONO.replace('13px', '18px');
+  const txt = ev.type === 'shot'
+    ? `SHOT ${ev.launch.speed.toFixed(1)} m/s · ${ev.launch.launch.toFixed(1)}° · dir ${ev.launch.direction.toFixed(1)}° · seen in ${ev.launch.points} frames · ${(ev.fps || 0).toFixed(0)} fps`
+    : 'MISSED — ball left the tee but was not found in flight';
+  ctx.fillText(`${txt} · v${VERSION}`, 10, rows * th + 27);
+  return c;
+}
+
+let diagFiles = [];
+async function openDiag() {
+  openSheet('#diagSheet');
+  $('#dText').textContent = 'Gathering…';
+  const d = running ? await workerDebug() : null;
+  const txt = reportText(d);
+  $('#dText').textContent = txt;
+  diagFiles = [new File([txt], `golf-sim-report-${Date.now()}.txt`, { type: 'text/plain' })];
+  const now = await snapshotNow(d);
+  if (now) { const b = await canvasBlob(now); $('#dImgNow').src = URL.createObjectURL(b); $('#dImgNow').hidden = false; diagFiles.push(new File([b], 'golf-sim-camera.jpg', { type: 'image/jpeg' })); }
+  else { $('#dImgNow').hidden = true; }
+  const sh = shotSheet();
+  if (sh) { const b = await canvasBlob(sh); $('#dImgShot').src = URL.createObjectURL(b); $('#dImgShot').hidden = false; diagFiles.push(new File([b], 'golf-sim-last-shot.jpg', { type: 'image/jpeg' })); $('#dShotNote').textContent = 'Green = where the ball sat. Yellow = ball found in flight.'; }
+  else { $('#dImgShot').hidden = true; $('#dShotNote').textContent = 'No camera shot yet — hit one first and this fills in.'; }
+  if (!running) $('#dImgNow').hidden = true;
+  log('opened Help me fix it');
+}
+$('#diagBtn').addEventListener('click', openDiag);
+$('#cDiag').addEventListener('click', () => { closeSetup(); openDiag(); });
+$('#rDiag').addEventListener('click', () => { closeSheets(); openDiag(); });
+$('#dCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#dText').textContent); toast('Report copied — paste it into Claude'); }
+  catch { toast('Couldn’t copy — take a screenshot of this screen instead'); }
+});
+$('#dShareAll').addEventListener('click', async () => {
+  if (!diagFiles.length) return;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: diagFiles })) { await navigator.share({ files: diagFiles, title: 'Golf Sim report' }); return; }
+    if (navigator.share) { await navigator.share({ title: 'Golf Sim report', text: $('#dText').textContent }); return; }
+    toast('Sharing isn’t available here — press and hold each picture to save it, and use Copy for the text');
+  } catch (e) { if (e.name !== 'AbortError') toast('Share didn’t work — press and hold the pictures to save them'); }
+});
+$('#dClearLog').addEventListener('click', () => { LOG = []; store.set('log', LOG); log('log cleared'); $('#dText').textContent = reportText(null); });
+function renderDebugChip() { const c = $('#cDebug'); c.textContent = `Show what it sees: ${S.debug === 'on' ? 'on' : 'off'}`; c.classList.toggle('on', S.debug === 'on'); }
+$('#cDebug').addEventListener('click', () => { S.debug = S.debug === 'on' ? 'off' : 'on'; saveSettings(); renderDebugChip(); dbg = null; });
+renderDebugChip();
 
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
