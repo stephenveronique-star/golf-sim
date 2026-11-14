@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Golf Sim</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Golf Sim">
+<meta name="theme-color" content="#0d1a12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #0d1a12; --panel: #13251a; --panel2: #1a3123; --line: #284a35;
+  --text: #f1f6f2; --muted: #9db8a6; --accent: #7ee36b; --accent2: #ffd34d;
+  --warn: #ffb44d; --bad: #ff6b5b;
+  --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden;
+  -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+.app { position: fixed; inset: 0; display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr);
+  padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l); }
+
+/* top bar */
+.bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(0,0,0,0.25); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 800; letter-spacing: 0.02em; font-size: 16px; margin-right: 4px; white-space: nowrap; }
+.brand span { color: var(--accent); }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--panel2);
+  font-size: 13px; font-weight: 600; white-space: nowrap; }
+.pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.pill.ready i { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.pill.busy i { background: var(--accent2); }
+.pill.off i { background: var(--bad); }
+.spacer { flex: 1; }
+.btn { padding: 7px 12px; border-radius: 10px; background: var(--panel2); font-weight: 600; font-size: 14px; white-space: nowrap; }
+.btn.primary { background: var(--accent); color: #0b1a0e; }
+.btn.ghost { background: transparent; border: 1px solid var(--line); }
+.btn:active { transform: scale(0.97); }
+.icon-btn { width: 36px; height: 36px; border-radius: 10px; background: var(--panel2); display: grid; place-items: center; }
+.icon-btn svg { width: 20px; height: 20px; }
+.club-btn { min-width: 64px; }
+
+/* main layout */
+.main { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 34%); min-height: 0; min-width: 0; }
+.stage { position: relative; min-height: 0; overflow: hidden; }
+#range { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.view-toggle { position: absolute; left: 10px; top: 10px; display: flex; gap: 4px; background: rgba(0,0,0,0.45); border-radius: 10px; padding: 3px; }
+.view-toggle button { padding: 5px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; color: #dfe; }
+.view-toggle button.on { background: rgba(255,255,255,0.2); }
+.pip { position: absolute; right: 10px; bottom: 10px; width: 24%; max-width: 200px; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden;
+  border: 2px solid rgba(255,255,255,0.6); background: #000; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+.pip canvas { width: 100%; height: 100%; display: block; }
+.pip .tag { position: absolute; left: 6px; top: 4px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+
+.side { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); }
+.big { padding: 10px 14px 6px; border-bottom: 1px solid var(--line); }
+.big .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+.big .val { font-size: 52px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.big .val small { font-size: 20px; font-weight: 700; color: var(--muted); margin-left: 4px; }
+.big .sub { color: var(--muted); font-size: 14px; margin-top: 3px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+.cell { background: var(--panel); padding: 7px 12px; }
+.cell .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+.cell .val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cell .val em { font-style: normal; font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 2px; }
+.est { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; margin-left: 4px; vertical-align: 2px; font-weight: 600; }
+.tabs { display: flex; gap: 2px; padding: 6px 8px 0; }
+.tabs button { flex: 1; padding: 6px 4px; font-size: 13px; font-weight: 700; color: var(--muted); border-bottom: 2px solid transparent; }
+.tabs button.on { color: var(--text); border-color: var(--accent); }
+.list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 8px 10px; -webkit-user-select: text; user-select: text; }
+.row { display: grid; grid-template-columns: 44px 1fr 1fr 1fr 26px; align-items: center; gap: 4px; padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,0.05); font-variant-numeric: tabular-nums; font-size: 14px; }
+.row.head { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.row .club { font-weight: 700; }
+.row .x { color: var(--muted); font-size: 16px; text-align: center; }
+.row.miss { color: var(--muted); font-style: italic; }
+.empty { color: var(--muted); padding: 14px 6px; font-size: 14px; }
+.actions { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
+.actions .btn { flex: 1; text-align: center; }
+
+/* overlays */
+.overlay { position: fixed; inset: 0; background: rgba(4,10,6,0.82); display: none; z-index: 20; padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px); }
+.overlay.show { display: flex; align-items: center; justify-content: center; }
+.sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; width: min(720px, 100%); max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 18px; }
+.sheet h2 { margin: 0 0 8px; font-size: 20px; }
+.sheet h3 { margin: 16px 0 6px; font-size: 15px; color: var(--accent); }
+.sheet p, .sheet li { color: #d5e4da; font-size: 14px; }
+.sheet .close { float: right; }
+.field { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.field label { font-weight: 600; }
+.field .hint { color: var(--muted); font-size: 12px; font-weight: 400; display: block; }
+.field input, .field select { font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; width: 140px; }
+.seg { display: inline-flex; background: var(--panel2); border-radius: 9px; padding: 2px; }
+.seg button { padding: 5px 10px; border-radius: 7px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.seg button.on { background: var(--accent); color: #0b1a0e; }
+.clubs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-top: 10px; }
+.clubs button { padding: 14px 4px; border-radius: 12px; background: var(--panel2); font-weight: 800; font-size: 18px; }
+.clubs button small { display: block; font-size: 11px; color: var(--muted); font-weight: 600; margin-top: 2px; }
+.clubs button.on { background: var(--accent); color: #0b1a0e; }
+.clubs button.on small { color: #0b1a0e; }
+
+/* camera setup */
+.setup { position: fixed; inset: 0; z-index: 15; background: #000; display: none; }
+.setup.show { display: block; }
+.setup canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.setup .hud { position: absolute; left: calc(var(--safe-l) + 10px); top: calc(var(--safe-t) + 10px); right: calc(var(--safe-r) + 10px); display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; pointer-events: none; }
+.setup .hud > * { pointer-events: auto; }
+.setup .msg { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-b) + 14px); background: rgba(0,0,0,0.7); padding: 10px 16px; border-radius: 12px; font-weight: 700; font-size: 16px; text-align: center; max-width: 92%; pointer-events: none; }
+.chip { background: rgba(0,0,0,0.65); border-radius: 10px; padding: 6px 10px; font-size: 13px; font-weight: 600; }
+.chip.ok { color: var(--accent); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+.setup .done { position: absolute; right: calc(var(--safe-r) + 10px); bottom: calc(var(--safe-b) + 12px); }
+
+/* start screen */
+.start { position: fixed; inset: 0; z-index: 30; background: radial-gradient(120% 90% at 50% 0%, #1f4a2c 0%, var(--bg) 60%); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.start.hide { display: none; }
+.start .card { max-width: 520px; text-align: center; }
+.start h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.start h1 span { color: var(--accent); }
+.start p { color: #c9dccf; margin: 0 0 18px; }
+.start .btns { display: flex; flex-direction: column; gap: 10px; align-items: stretch; max-width: 320px; margin: 0 auto; }
+.start .btn { padding: 13px 16px; font-size: 16px; border-radius: 14px; }
+.start .note { font-size: 12px; color: var(--muted); margin-top: 14px; }
+
+.toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 58px); transform: translateX(-50%) translateY(-20px); opacity: 0; transition: all 0.25s; background: rgba(0,0,0,0.85); border: 1px solid var(--line); padding: 10px 16px; border-radius: 12px; z-index: 40; font-weight: 600; max-width: 90%; text-align: center; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.replay canvas { width: 100%; border-radius: 10px; background: #000; display: block; }
+.replay .ctrl { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.replay input[type=range] { flex: 1; }
+svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12px; }
+.kv { color: var(--muted); font-size: 12px; }
+
+@media (orientation: portrait) {
+  .bar { flex-wrap: wrap; row-gap: 6px; }
+  .bar .spacer { display: none; }
+  .bar .btn { padding: 6px 10px; font-size: 13px; }
+  .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 42% minmax(0, 1fr); }
+  .side { border-left: 0; border-top: 1px solid var(--line); }
+  .big .val { font-size: 44px; }
+  .brand { display: none; }
+}
+@media (max-height: 430px) and (orientation: landscape) {
+  .side { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .list { flex: none; overflow: visible; min-height: 120px; }
+  .big { padding: 6px 12px 4px; }
+  .big .sub { font-size: 12px; }
+  .big .val { font-size: 42px; }
+  .cell { padding: 4px 10px; }
+  .cell .val { font-size: 17px; }
+  .bar { padding: 5px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">
+    <div class="brand">GOLF<span>SIM</span></div>
+    <div class="pill off" id="status"><i></i><span>Camera off</span></div>
+    <div class="spacer"></div>
+    <button class="btn club-btn" id="clubBtn">7 Iron</button>
+    <button class="btn" id="cameraBtn">Camera</button>
+    <button class="btn ghost" id="demoBtn" title="Simulated shot">Demo shot</button>
+    <button class="icon-btn" id="helpBtn" aria-label="Setup guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg></button>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </div>
+  <div class="main">
+    <div class="stage">
+      <canvas id="range"></canvas>
+      <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
+      <div class="pip" id="pip" hidden><canvas id="pipCanvas"></canvas><div class="tag" id="pipTag">Camera</div></div>
+    </div>
+    <div class="side">
+      <div class="big">
+        <div class="lbl">Carry</div>
+        <div class="val" id="vCarry">—<small id="uCarry">m</small></div>
+        <div class="sub" id="vSub">Hit a shot, or tap Demo shot to try it</div>
+      </div>
+      <div class="grid">
+        <div class="cell"><div class="lbl">Total</div><div class="val" id="vTotal">—</div></div>
+        <div class="cell"><div class="lbl">Ball speed</div><div class="val" id="vSpeed">—</div></div>
+        <div class="cell"><div class="lbl">Launch</div><div class="val" id="vLaunch">—</div></div>
+        <div class="cell"><div class="lbl">Direction <span class="est">est</span></div><div class="val" id="vDir">—</div></div>
+        <div class="cell"><div class="lbl">Offline <span class="est">est</span></div><div class="val" id="vOff">—</div></div>
+        <div class="cell"><div class="lbl">Apex</div><div class="val" id="vApex">—</div></div>
+        <div class="cell"><div class="lbl">Club speed <span class="est">est</span></div><div class="val" id="vClub">—</div></div>
+        <div class="cell"><div class="lbl">Spin <span class="est">est</span></div><div class="val" id="vSpin">—</div></div>
+      </div>
+      <div class="tabs"><button class="on" data-tab="session">This session</button><button data-tab="clubs">My distances</button></div>
+      <div class="list" id="list"></div>
+      <div class="actions"><button class="btn" id="replayBtn">Replay last</button><button class="btn" id="clearBtn">New session</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- start -->
+<div class="start" id="start">
+  <div class="card">
+    <h1>Golf<span>Sim</span></h1>
+    <p>Put your iPhone on a tripod beside the ball, hit into your net, and see how far it went and where it went.</p>
+    <div class="btns">
+      <button class="btn primary" id="startCam">Start camera</button>
+      <button class="btn" id="startGuide">How to set up</button>
+      <button class="btn ghost" id="startDemo">Just try demo shots</button>
+    </div>
+    <div class="note" id="startNote">Works best in Safari on iPhone, in landscape, outdoors in daylight.</div>
+  </div>
+</div>
+
+<!-- camera setup -->
+<div class="setup" id="setup">
+  <canvas id="setupCanvas"></canvas>
+  <div class="hud">
+    <div class="chip" id="cFps">Camera …</div>
+    <div class="chip" id="cProc">Processing …</div>
+    <div class="chip" id="cBall">Ball: tap it</div>
+    <button class="chip" id="cLevel">Level: tap to check</button>
+  </div>
+  <div class="msg" id="setupMsg">Tap the ball on the screen</div>
+  <button class="btn primary done" id="setupDone">Done</button>
+</div>
+
+<!-- club picker -->
+<div class="overlay" id="clubSheet"><div class="sheet">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Club</h2>
+  <div class="clubs" id="clubGrid"></div>
+</div></div>
+
+<!-- settings -->
+<div class="overlay" id="settingsSheet"><div class="sheet">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Settings</h2>
+  <div class="field"><label>Distance</label><div class="seg" data-set="dist"><button data-v="m">Metres</button><button data-v="yd">Yards</button></div></div>
+  <div class="field"><label>Speed</label><div class="seg" data-set="speed"><button data-v="mph">mph</button><button data-v="kmh">km/h</button><button data-v="ms">m/s</button></div></div>
+  <div class="field"><label>Altitude (m)<span class="hint">Thinner air carries further. Johannesburg ≈ 1750, Cape Town ≈ 0</span></label><input type="number" data-num="altitude" step="10"></div>
+  <div class="field"><label>Temperature (°C)</label><input type="number" data-num="tempC" step="1"></div>
+  <div class="field"><label>Fairway</label><div class="seg" data-set="firmness"><button data-v="0.6">Soft</button><button data-v="1">Normal</button><button data-v="1.5">Firm</button></div></div>
+  <div class="field"><label>Announce carry<span class="hint">Says the distance out loud after each shot</span></label><div class="seg" data-set="voice"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
+  <h3>Camera</h3>
+  <div class="field"><label>Which camera</label><select id="camSelect"><option value="">Back camera (default)</option></select></div>
+  <div class="field"><label>Camera field of view (°)<span class="hint">Main camera ≈ 67, Ultra Wide ≈ 106. Used for direction and distance-to-ball.</span></label><input type="number" data-num="hfov" step="1"></div>
+  <div class="field"><label>Processing width (px)<span class="hint">Lower if the processing time shows red</span></label><select data-sel="procW"><option value="640">640</option><option value="960">960</option><option value="1280">1280</option></select></div>
+  <div class="field"><label>Sensitivity<span class="hint">Lower number = picks up fainter balls (more false hits)</span></label><input type="number" data-num="threshold" step="1" min="6" max="40"></div>
+  <h3>Calibration</h3>
+  <div class="field"><label>Ball speed adjust (%)<span class="hint">If carries read long or short against a club you know, nudge this</span></label><input type="number" data-num="speedCal" step="0.5"></div>
+  <div class="field"><label>Aim adjust (°)<span class="hint">If straight shots read left/right, set this to cancel it</span></label><input type="number" data-num="aim" step="0.5"></div>
+  <p class="kv" id="about"></p>
+</div></div>
+
+<!-- help -->
+<div class="overlay" id="helpSheet"><div class="sheet">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Setting up</h2>
+  <svg class="diagram" viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, sans-serif">
+    <rect x="0" y="0" width="640" height="260" fill="#10301c"/>
+    <text x="16" y="24" fill="#9db8a6" font-size="13" font-weight="700">VIEW FROM ABOVE (right-handed golfer)</text>
+    <!-- target line -->
+    <line x1="120" y1="120" x2="600" y2="120" stroke="#ffffff" stroke-opacity="0.35" stroke-dasharray="5 6"/>
+    <!-- net -->
+    <rect x="430" y="50" width="12" height="140" rx="3" fill="#2a2a2a" stroke="#9db8a6"/>
+    <text x="452" y="70" fill="#f1f6f2" font-size="13">Net</text>
+    <text x="452" y="86" fill="#9db8a6" font-size="12">2.5–4 m from ball</text>
+    <!-- golfer -->
+    <ellipse cx="165" cy="80" rx="28" ry="16" fill="#3a6b4a"/><circle cx="165" cy="80" r="10" fill="#d9c2a3"/>
+    <text x="120" y="52" fill="#f1f6f2" font-size="13">Golfer</text>
+    <!-- ball -->
+    <circle cx="170" cy="120" r="6" fill="#fff"/>
+    <text x="182" y="136" fill="#f1f6f2" font-size="12">Ball</text>
+    <!-- arrow -->
+    <path d="M190 120 L300 120" stroke="#ffd34d" stroke-width="3"/><path d="M300 113 L314 120 L300 127 Z" fill="#ffd34d"/>
+    <text x="214" y="112" fill="#ffd34d" font-size="12">to target</text>
+    <!-- phone -->
+    <rect x="210" y="206" width="50" height="22" rx="5" fill="#111" stroke="#7ee36b" stroke-width="2"/>
+    <circle cx="218" cy="217" r="3" fill="#7ee36b"/>
+    <text x="270" y="214" fill="#7ee36b" font-size="13" font-weight="700">iPhone on tripod</text>
+    <text x="270" y="230" fill="#9db8a6" font-size="12">facing the golfer, square to the target line</text>
+    <line x1="235" y1="203" x2="175" y2="128" stroke="#7ee36b" stroke-dasharray="3 4"/>
+    <line x1="235" y1="203" x2="420" y2="122" stroke="#7ee36b" stroke-dasharray="3 4"/>
+    <text x="66" y="176" fill="#f1f6f2" font-size="13" font-weight="700">2.5–3.5 m</text>
+    <path d="M150 128 L150 206" stroke="#f1f6f2" stroke-opacity="0.6"/>
+    <text x="16" y="250" fill="#9db8a6" font-size="12">Left-handed: mirror it — the app works out which way the ball flies.</text>
+  </svg>
+  <h3>Steps</h3>
+  <ol>
+    <li>Put the phone on a tripod <b>in landscape</b>, about <b>2.5–3.5 m</b> from the ball, facing you, with the lens at about the height of the ball (low tripod, 20–40 cm).</li>
+    <li>Keep the phone <b>square to the target line</b> and level. Use <i>Level</i> on the camera screen to check.</li>
+    <li>Frame it so the ball sits about a <b>quarter of the way in from the side you hit from</b>, so the screen shows as much of the flight as possible before the net.</li>
+    <li>Tap <b>Camera</b>, then tap the ball on the screen. When it says <b>Ready</b>, hit.</li>
+    <li>After each shot, tee up a new ball in the same spot. The app finds it and gets ready again by itself.</li>
+  </ol>
+  <h3>For good readings</h3>
+  <ul>
+    <li>Daylight, ideally bright. A white ball against grass, a dark mat or a dark net reads best; avoid bright sky or a white wall directly behind the ball's path.</li>
+    <li>Keep other balls out of the picture and stand so your body is behind the ball, not between it and the phone.</li>
+    <li>The ball should show at 8–20 px on the camera screen. Move the phone closer if it's smaller.</li>
+    <li>Choose the club before you hit — spin is estimated from the club, because one camera can't see spin.</li>
+    <li>A shank or toe-hit for a right-hander goes toward the phone. Keep the tripod a little further back, or put a small screen in front of it, once you're comfortable with the setup.</li>
+  </ul>
+  <h3>What's measured and what's estimated</h3>
+  <p>Ball speed and launch angle are measured from the ball's flight across the screen. Direction is estimated from how the ball's size changes as it flies toward or away from the phone, so treat left/right as a guide. Spin, club speed and curve are estimated. Carry and total come from a ball-flight model fitted to tour launch-monitor data, adjusted for your altitude and temperature.</p>
+</div></div>
+
+<!-- replay -->
+<div class="overlay" id="replaySheet"><div class="sheet replay">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Last shot, frame by frame</h2>
+  <p class="kv" id="replayInfo"></p>
+  <canvas id="replayCanvas"></canvas>
+  <div class="ctrl"><button class="btn" id="rPrev">◀</button><input type="range" id="rSlider" min="0" max="0" value="0"><button class="btn" id="rNext">▶</button></div>
+  <p class="kv">Green circle = where the ball sat. Yellow = ball found in flight. The line is the measured launch.</p>
+</div></div>
+
+<div class="toast" id="toast"></div>
+<video id="video" playsinline muted autoplay style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
