@@ -1,7 +1,7 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -192,7 +192,7 @@ function demoShot() {
   const speed = c.ball * MPH * (0.85 + 0.04 * g());
   recordShot({ speed, launch: Math.max(2, c.launch + 1.5 + 1.8 * g()), direction: 3 * g(), points: 0 }, { demo: true });
 }
-$('#demoBtn').addEventListener('click', () => { unlockAudio(); demoShot(); });
+
 
 // ------------------------------------------------------------ camera
 // Frames are analysed in a worker. Best path: MediaStreamTrackProcessor
@@ -267,9 +267,10 @@ function onEngineEvent(ev) {
   }
 }
 
-function camConstraints(fps) {
+function camConstraints(fps, devId) {
   const v = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: fps } };
-  if (S.camId) v.deviceId = { exact: S.camId }; else v.facingMode = { ideal: 'environment' };
+  const id = devId || S.camId;
+  if (id) v.deviceId = { exact: id }; else v.facingMode = { ideal: 'environment' };
   return { audio: false, video: v };
 }
 
@@ -285,13 +286,28 @@ async function startCamera() {
   } catch (e) {
     const framed = (() => { try { return window.self !== window.top; } catch { return true; } })();
     const msg = framed
-      ? 'This preview can’t use the camera. Open the app from its own link in Safari to use the camera — demo shots work here.'
+      ? 'This preview can’t use the camera. Open the app from its own link in Safari to use the camera.'
       : e.name === 'NotAllowedError'
       ? 'Camera permission was refused. On iPhone: Settings › Apps › Safari › Camera › Allow, then reload.'
       : `Couldn't start the camera (${e.name || e.message}).`;
     toast(msg, 7000); $('#startNote').textContent = msg;
     setStatus('off', 'Camera off');
     return false;
+  }
+  // iPhone's default "Back Triple/Dual Camera" swaps lenses by itself, which
+  // changes the field of view mid-session. Use the main "Back Camera" instead.
+  if (!S.camId && /triple|dual/i.test(stream.getVideoTracks()[0].label || '')) {
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      const main = devs.find((d) => /^back camera$/i.test(d.label.trim()));
+      if (main) {
+        const old = stream.getVideoTracks()[0].label;
+        stream.getTracks().forEach((t) => t.stop());
+        try { stream = await navigator.mediaDevices.getUserMedia(camConstraints(120, main.deviceId)); }
+        catch { stream = await navigator.mediaDevices.getUserMedia(camConstraints(60, main.deviceId)); }
+        log(`switched from ${old} to ${main.label} (fixed lens)`);
+      }
+    } catch (e) { log(`couldn't switch to main camera: ${e.name || e.message}`); try { stream = await navigator.mediaDevices.getUserMedia(camConstraints(60)); } catch { /* keep going */ } }
   }
   const track = stream.getVideoTracks()[0];
   try { const st = track.getSettings(); log(`camera started ${st.width}×${st.height} @ ${st.frameRate} fps (${track.label || 'camera'})`); } catch { /* ignore */ }
@@ -439,14 +455,17 @@ const setupC = $('#setupCanvas');
 let fit = { x: 0, y: 0, w: 1, h: 1, dpr: 1 };
 function drawSetup() {
   const r = setupC.getBoundingClientRect();
-  const dpr = Math.min(2, devicePixelRatio || 1);
+  const dpr = Math.min(1.5, devicePixelRatio || 1);
   if (setupC.width !== Math.round(r.width * dpr) || setupC.height !== Math.round(r.height * dpr)) { setupC.width = Math.round(r.width * dpr); setupC.height = Math.round(r.height * dpr); }
   const ctx = setupC.getContext('2d');
   const cw = setupC.width, ch = setupC.height;
   const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
   const sc = Math.min(cw / vw, ch / vh);
   fit = { x: (cw - vw * sc) / 2, y: (ch - vh * sc) / 2, w: vw * sc, h: vh * sc, dpr };
-  ctx.clearRect(0, 0, cw, ch); // the live video shows underneath; only the markings are drawn here
+  // Draw the camera picture ourselves (some iPhone browsers won't show the video element),
+  // but only ~10 times a second and at modest resolution so the tracker never misses frames.
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
+  if (video.videoWidth) ctx.drawImage(video, fit.x, fit.y, fit.w, fit.h);
   ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
   for (const f of [0.25, 0.75]) { ctx.beginPath(); ctx.moveTo(fit.x + fit.w * f, fit.y); ctx.lineTo(fit.x + fit.w * f, fit.y + fit.h); ctx.stroke(); }
   if (eng.ball && eng.w) {
@@ -501,14 +520,17 @@ setInterval(async () => {
 function flashTap(x, y, ok) { tapMark = { x, y, ok, t: performance.now() }; }
 
 let lastReadySt = null;
+let wasPortrait = null;
 function updateReady() {
-  const st = !running ? 'off' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
+  const portrait = running && video.videoHeight > video.videoWidth;
+  if (portrait !== wasPortrait && running && video.videoWidth) { log(portrait ? 'phone is upright (portrait) — waiting for landscape' : 'phone is sideways (landscape)'); wasPortrait = portrait; }
+  const st = !running ? 'off' : portrait ? 'turn' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
   document.body.dataset.ready = st;
   const el = $('#readyLight');
-  el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : '';
-  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : '';
+  el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : st === 'turn' ? 'TURN PHONE SIDEWAYS' : '';
+  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : st === 'turn' ? 'The camera only works in landscape' : '';
   if ($('#setup').classList.contains('show') && st !== lastReadySt) {
-    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : 'Put a ball down and step back — I’ll find it (or tap it)';
+    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : st === 'turn' ? 'Turn the phone sideways (landscape) — the camera only works that way' : 'Put a ball down and step back — I’ll find it (or tap it)';
   }
   lastReadySt = st;
 }
@@ -554,12 +576,11 @@ $('#cLevel').addEventListener('click', async () => {
 
 function openSetup() {
   $('#setup').classList.add('show');
-  video.classList.add('full');
   lastReadySt = null; updateReady();
   $('#setupMsg').textContent = eng.state === 'armed' ? 'Ready — hit away (tap the ball again to re-mark it)' : 'Put a ball down and step back — I’ll find it (or tap it)';
   if (!running) startCamera();
 }
-function closeSetup() { $('#setup').classList.remove('show'); video.classList.remove('full'); }
+function closeSetup() { $('#setup').classList.remove('show'); }
 $('#setupDone').addEventListener('click', closeSetup);
 $('#cameraBtn').addEventListener('click', () => { unlockAudio(); openSetup(); });
 
@@ -777,7 +798,7 @@ $('#startCam').addEventListener('click', async () => {
   $('#start').classList.add('hide');
   openSetup();
 });
-$('#startDemo').addEventListener('click', () => { unlockAudio(); $('#start').classList.add('hide'); demoShot(); });
+
 $('#startGuide').addEventListener('click', () => openSheet('#helpSheet'));
 
 renderClubs();

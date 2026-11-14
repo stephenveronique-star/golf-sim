@@ -476,7 +476,8 @@ export class ShotEngine {
     const rec = this._store(g, t);
     if (this.state === 'armed') return this._armedStep(rec);
     if (this.state === 'waiting') return this._waitingStep(rec);
-    if (this.state === 'idle' && this.opts.autoFind) return this._autoStep(rec, null, 1.0);
+    // only search by itself when the phone is sideways (landscape)
+    if (this.state === 'idle' && this.opts.autoFind && this.w >= this.h) return this._autoStep(rec, null, 1.0);
     return null;
   }
 

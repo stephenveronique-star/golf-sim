@@ -90,7 +90,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   padding: 8px 22px; border-radius: 16px; background: rgba(0,0,0,0.55); text-align: center; pointer-events: none; }
 .ready-light b { font-size: 34px; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05; }
 .ready-light span { font-size: 13px; font-weight: 600; color: #dfe; }
-body[data-ready=ready] .ready-light, body[data-ready=tee] .ready-light, body[data-ready=look] .ready-light { display: flex; }
+body[data-ready=ready] .ready-light, body[data-ready=tee] .ready-light, body[data-ready=look] .ready-light, body[data-ready=turn] .ready-light { display: flex; }
+body[data-ready=turn] .ready-light { background: rgba(200,60,40,0.9); }
+body[data-ready=turn] .setup::after { box-shadow: inset 0 0 0 10px #ff6b5b; }
 body[data-ready=ready] .ready-light { background: rgba(40,140,40,0.85); }
 body[data-ready=ready] .ready-light b { font-size: 46px; }
 body[data-ready=tee] .ready-light { background: rgba(200,130,0,0.85); }
@@ -129,7 +131,7 @@ body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .clubs button.on small { color: #0b1a0e; }
 
 /* camera setup */
-.setup { position: fixed; inset: 0; z-index: 16; background: transparent; display: none; }
+.setup { position: fixed; inset: 0; z-index: 16; background: #000; display: none; }
 #video.full { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; object-fit: contain; opacity: 1 !important; z-index: 15 !important; background: #000; }
 .setup.show { display: block; }
 .setup canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
@@ -189,7 +191,6 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="spacer"></div>
     <button class="btn club-btn" id="clubBtn">7 Iron</button>
     <button class="btn" id="cameraBtn">Camera</button>
-    <button class="btn ghost" id="demoBtn" title="Simulated shot">Demo shot</button>
     <button class="icon-btn" id="helpBtn" aria-label="Setup guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg></button>
     <button class="icon-btn" id="diagBtn" aria-label="Help me fix it" title="Help me fix it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
@@ -205,7 +206,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
       <div class="big">
         <div class="lbl">Carry</div>
         <div class="val" id="vCarry">—<small id="uCarry">m</small></div>
-        <div class="sub" id="vSub">Hit a shot, or tap Demo shot to try it</div>
+        <div class="sub" id="vSub">Set up the camera and hit a shot</div>
       </div>
       <div class="grid">
         <div class="cell"><div class="lbl">Total</div><div class="val" id="vTotal">—</div></div>
@@ -232,7 +233,6 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="btns">
       <button class="btn primary" id="startCam">Start camera</button>
       <button class="btn" id="startGuide">How to set up</button>
-      <button class="btn ghost" id="startDemo">Just try demo shots</button>
     </div>
     <div class="note" id="startNote">Works best in Safari on iPhone, in landscape, outdoors in daylight.</div>
   </div>
