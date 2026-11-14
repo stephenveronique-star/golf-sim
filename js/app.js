@@ -1,7 +1,9 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
+import { SwingCapture } from './posecap.js';
+import { analyseSwing, LM } from './swing.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -12,7 +14,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off',
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', ballDist: '',
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -65,23 +67,60 @@ $$('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target 
 
 // audio cue + voice
 let audioCtx = null;
-function unlockAudio() {
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* older iOS */ }
-  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { /* none */ }
-  try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(''); speechSynthesis.speak(u); } } catch { /* none */ }
+let audioUnlocked = false, speechOk = null, voicePick = null;
+function pickVoice() {
+  try {
+    const vs = speechSynthesis.getVoices();
+    voicePick = vs.find((v) => /en-ZA/i.test(v.lang)) || vs.find((v) => /en-GB/i.test(v.lang)) || vs.find((v) => /^en/i.test(v.lang)) || null;
+  } catch { /* none */ }
 }
-function beep(freq = 880, dur = 0.12, vol = 0.15) {
+try { if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } } catch { /* none */ }
+
+// Must be called from a tap: iPhone only allows sound after the user has touched the page.
+function unlockAudio(first) {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* older iOS */ }
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume();
+    // a silent buffer played inside the tap fully wakes iPhone audio
+    const b = audioCtx.createBuffer(1, 1, 22050), src = audioCtx.createBufferSource();
+    src.buffer = b; src.connect(audioCtx.destination); src.start(0);
+  } catch { /* none */ }
+  if (!audioUnlocked && first) { audioUnlocked = true; say(first, true); }
+}
+function beep(freq = 880, dur = 0.12, vol = 0.25) {
   if (!audioCtx) return;
   try {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.frequency.value = freq; o.type = 'sine';
     g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
     o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + dur);
   } catch { /* ignore */ }
 }
-function say(text) {
-  if (S.voice !== 'on' || !('speechSynthesis' in window)) return;
-  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; speechSynthesis.speak(u); } catch { /* ignore */ }
+function say(text, force) {
+  if ((!force && S.voice !== 'on') || !('speechSynthesis' in window)) { if (!('speechSynthesis' in window)) log('no speech available in this browser'); return; }
+  const go = () => {
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.0; u.volume = 1; u.lang = voicePick ? voicePick.lang : 'en-GB';
+      if (voicePick) u.voice = voicePick;
+      u.onstart = () => { if (speechOk !== true) { speechOk = true; log(`speech working (${voicePick ? voicePick.name : 'default voice'})`); } };
+      u.onerror = (e) => { speechOk = false; log(`speech error: ${e.error || 'unknown'} saying "${text}"`); };
+      speechSynthesis.speak(u);
+      // iPhone sometimes leaves speech paused in the background
+      if (speechSynthesis.paused) speechSynthesis.resume();
+    } catch (e) { log(`speech failed: ${e.message}`); }
+  };
+  // Cancelling and speaking at the same moment makes iPhone drop the words: leave a gap.
+  try { if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); setTimeout(go, 120); } else go(); } catch { go(); }
+}
+function testSound() {
+  unlockAudio();
+  beep(880, 0.12); setTimeout(() => beep(1320, 0.14), 150);
+  setTimeout(() => say('Sound check. One, two, three.', true), 400);
+  log(`test sound pressed · speech ${'speechSynthesis' in window ? 'available' : 'missing'} · audio ${audioCtx ? audioCtx.state : 'none'}`);
+  setTimeout(() => { if (speechOk !== true) toast('If you heard nothing: check the silent switch on the side of the iPhone is off and the volume is up, then try again.', 7000); }, 2600);
 }
 
 // ------------------------------------------------------------ range + numbers
@@ -122,6 +161,21 @@ function renderList() {
       h += `<div class="row"><div class="club">${s.club}${s.demo ? '*' : ''}</div><div>${fmtDist(s.carry)}</div><div>${fmtDist(s.total)}</div><div>${side}</div><div class="x" data-del="${s.id}">✕</div></div>`;
     }
     if (list.some((s) => s.demo)) h += '<div class="empty">* demo shot</div>';
+    L.innerHTML = h;
+  } else if (tab === 'swing') {
+    const list = shots.filter((s) => s.swing).slice(-20).reverse();
+    if (!list.length) { L.innerHTML = '<div class="empty">After each shot the app checks your stance, ball position, sway and weight shift. Your results build up here. Put your height in Settings for accurate measurements.</div>'; return; }
+    const cols = 'grid-template-columns:40px 1fr 1fr 1fr 1fr';
+    let h = `<div class="row head" style="${cols}"><div>Club</div><div>Stance</div><div>Ball</div><div>Head</div><div>Hips</div></div>`;
+    for (const s of list) {
+      const w = s.swing;
+      if (!w.ok) { h += `<div class="row miss" style="${cols}"><div class="club">${s.club}</div><div style="grid-column: span 4">${w.note || 'not seen'}</div></div>`; continue; }
+      const m = w.m;
+      const sg = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v}`);
+      h += `<div class="row" style="${cols}"><div class="club">${s.club}</div><div>${m.stanceCm}cm</div><div>${m.ballPct}%</div><div>${sg(m.headTopCm)}</div><div>${sg(m.hipImpCm)}</div></div>`;
+      if (w.tips && w.tips.length) h += `<div class="row" style="grid-template-columns:1fr;color:var(--accent2);font-size:12px;border:0;padding-top:0">↳ ${w.tips.map((t) => t.short).join(' · ')}</div>`;
+    }
+    h += '<div class="empty">Ball = position between your feet (0% back foot, 100% front foot). Head = how far it moved on the backswing (− = away from target). Hips = how far they moved towards the target by impact.</div>';
     L.innerHTML = h;
   } else {
     const by = {};
@@ -210,7 +264,7 @@ const eng = { state: 'idle', fps: 0, procMs: 0, w: 0, h: 0, ball: null, frames: 
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 let setBallSeq = 0;
 const pending = new Map();
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off' } }); }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: +S.ballDist || 0 } }); }
 sendConfig();
 
 worker.onmessage = (e) => {
@@ -256,7 +310,7 @@ function onEngineEvent(ev) {
     const L = ev.launch;
     log(`SHOT speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
-    if (ev.launch.speed >= 3) recordShot(ev.launch);
+    if (ev.launch.speed >= 3) { const rec = recordShot(ev.launch); if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); }
   } else if (ev.type === 'moved') {
     eng.state = 'waiting'; updateReady();
     log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
@@ -345,6 +399,7 @@ async function startCamera() {
   }
   startWatchdog();
   log(`capture path: ${mode}`);
+  if (S.tips === 'on') swingCap.load().catch(() => { /* logged */ });
   $('#pip').hidden = false;
   setStatus('busy', 'Looking for the ball');
   populateCameras();
@@ -467,6 +522,7 @@ function drawLoop(now) {
   if ($('#setup').classList.contains('show')) { if (now - lastPip > 100) { lastPip = now; drawSetup(); } }
   else if (now - lastPip > 100) { lastPip = now; drawPip(); }
   if (now - lastChips > 400) { lastChips = now; updateChips(); }
+  if (S.tips === 'on') swingCap.tick(now / 1000);
   requestAnimationFrame(drawLoop);
 }
 
@@ -583,9 +639,10 @@ function updateChips() {
   const cb = $('#cBall');
   if (eng.ball && eng.w) {
     const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
-    const dist = (f * BALL.diameter) / eng.ball.d;
+    const measured = +S.ballDist > 0.5;
+    const dist = measured ? +S.ballDist : (f * BALL.diameter) / eng.ball.d;
     const tooClose = dist < 2.2, tooFar = dist > 4.2;
-    cb.textContent = `Ball ${eng.ball.d.toFixed(0)} px · about ${dist.toFixed(1)} m away${tooClose ? ' — too close, move the phone back to 2.5–3.5 m' : tooFar ? ' — too far, move closer' : ''}`;
+    cb.textContent = `Ball ${eng.ball.d.toFixed(0)} px · ${measured ? '' : 'about '}${dist.toFixed(1)} m away${measured ? ' (measured)' : ''}${tooClose ? ' — too close, move the phone back to 2.5–3.5 m' : tooFar ? ' — too far, move closer' : ''}`;
     cb.className = 'chip ' + (tooClose || tooFar ? 'bad' : 'ok');
   } else { cb.textContent = 'Ball: tap it'; cb.className = 'chip'; }
 }
@@ -619,7 +676,7 @@ function openSetup() {
 }
 function closeSetup() { $('#setup').classList.remove('show'); }
 $('#setupDone').addEventListener('click', closeSetup);
-$('#cameraBtn').addEventListener('click', () => { unlockAudio(); openSetup(); });
+$('#cameraBtn').addEventListener('click', () => { unlockAudio('Camera on'); openSetup(); });
 
 let wakeLock = null;
 async function requestWakeLock() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* ignore */ } }
@@ -707,6 +764,136 @@ function applyUnits() {
   if (last) showNumbers(last); else $('#uCarry').textContent = dUnit();
 }
 
+
+// ------------------------------------------------------------ swing check
+const swingCap = new SwingCapture(video, log);
+let lastSwing = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [28, 30], [29, 31], [30, 32], [27, 31], [28, 32]];
+const NOTES = {
+  nobody: 'Couldn’t see you in the picture.',
+  feet: 'Couldn’t see your feet — get your whole body in the picture.',
+  head: 'Couldn’t see your head — raise the phone to hip height or move it back a little.',
+  backswing: 'Couldn’t follow that swing clearly.',
+  address: 'Couldn’t see your set-up clearly before the swing.',
+  unclear: 'Couldn’t see your body clearly enough.',
+  load: 'Swing tips need internet the first time to download (about 20 MB).',
+};
+
+function setTips(html) { const el = $('#tips'); el.hidden = !html; el.innerHTML = html || ''; }
+
+async function runSwingCheck(ev, rec) {
+  const offset = performance.now() / 1000 - ev.tNow; // tracker clock -> this page's clock
+  const tImp = ev.track.tImp + offset;
+  setTips('<div class="h">Swing check</div><div class="note">Checking your swing…</div>');
+  await sleep(Math.max(0, (tImp + 1.1 - performance.now() / 1000) * 1000));
+  let res;
+  worker.postMessage({ cmd: 'hold', on: true }); // don't get ready for the next ball until this is done
+  const unhold = setTimeout(() => worker.postMessage({ cmd: 'hold', on: false }), 8000);
+  try {
+    const { frames, pics } = await swingCap.analyse(tImp, ev.w, ev.h);
+    const sgn = S.hand === 'right' ? 1 : S.hand === 'left' ? -1 : (ev.launch.targetSign || 1);
+    res = analyseSwing(frames, { tImp, ball: ev.tee, club: rec.club, s: sgn, heightCm: +S.heightCm || 0 });
+    res.img = res.ok ? await swingPicture(res, pics, ev) : null;
+  } catch (e) { res = { ok: false, reason: 'load', error: String(e.message || e) }; }
+  finally { clearTimeout(unhold); worker.postMessage({ cmd: 'hold', on: false }); }
+  lastSwing = res;
+  if (!res.ok) {
+    log(`SWING not analysed: ${res.reason}${res.error ? ' ' + res.error : ''} (body seen in ${res.seen ?? 0} pictures)`);
+    rec.swing = { ok: false, note: NOTES[res.reason] || 'not seen' };
+    setTips(`<div class="h">Swing check</div><div class="note">${NOTES[res.reason] || 'Couldn’t check that swing.'}</div>`);
+  } else {
+    const m = res.metrics;
+    const r = (v) => (v == null ? null : Math.round(v));
+    rec.swing = { ok: true, tips: res.tips.slice(0, 3).map((t) => ({ key: t.key, short: t.short })),
+      m: { stanceCm: r(m.stanceCm), ballPct: r(m.ballPos * 100), headTopCm: r(m.headTopCm), hipTopCm: r(m.hipTopCm), hipImpCm: r(m.hipImpCm), headImpCm: r(m.headImpCm), tilt: r(m.tilt), handsAheadCm: r(m.handsAheadCm), finishHipCm: r(m.finishHipCm) } };
+    log(`SWING ${rec.club}: stance ${r(m.stanceCm)} cm (×${m.stanceRatio.toFixed(2)} shoulders) · ball ${r(m.ballPos * 100)}% · tilt ${r(m.tilt)}° · head back ${r(m.headTopCm)} · hips back ${r(m.hipTopCm)} · hips at impact ${r(m.hipImpCm)} · finish ${r(m.finishHipCm)} · scale ${res.scaleFrom} · tips: ${res.tips.map((t) => t.key).join(', ') || 'none'}`);
+    const top = res.tips.slice(0, 2);
+    const noHeight = !(+S.heightCm);
+    setTips(`<div class="h">Swing check <button id="tipsMore">See swing ›</button></div>` +
+      (top.length ? `<ul>${top.map((t) => `<li>${t.short}</li>`).join('')}</ul>` : `<div class="ok">Looks good — ${res.good.slice(0, 2).join(' · ') || 'no clear faults'}</div>`) +
+      (noHeight ? '<div class="note">Add your height in Settings for accurate cm.</div>' : ''));
+    $('#tipsMore')?.addEventListener('click', openSwing);
+    if (top.length) setTimeout(() => say(`Tip: ${top[0].short}`), 2200);
+  }
+  saveShots(); if (tab === 'swing') renderList();
+}
+
+// four positions side by side with the body outline drawn on
+async function swingPicture(res, pics, ev) {
+  const keys = [['Address', res.frames.addr], ['Top', res.frames.top], ['Impact', res.frames.imp], ['Finish', res.frames.fin]].filter((k) => k[1]);
+  const nearest = (t) => pics.reduce((b, p) => (Math.abs(p.t - t) < Math.abs(b.t - t) ? p : b), pics[0]);
+  const tw = 360, th = Math.round(tw * ev.h / ev.w);
+  const c = document.createElement('canvas'); c.width = tw * keys.length; c.height = th + 26;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
+  const k = tw / ev.w;
+  keys.forEach(([name, f], i) => {
+    const x0 = i * tw;
+    const pic = nearest(f.t);
+    try { ctx.drawImage(pic.bmp, x0, 0, tw, th); } catch { /* closed */ }
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, tw, th); ctx.clip();
+    ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    for (const [a, b] of BONES) { const p = f.lm[a], q = f.lm[b]; if (!p || !q || p.v < 0.3 || q.v < 0.3) continue; ctx.beginPath(); ctx.moveTo(x0 + p.x * k, p.y * k); ctx.lineTo(x0 + q.x * k, q.y * k); ctx.stroke(); }
+    const n = f.lm[LM.nose]; if (n) { ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(x0 + n.x * k, n.y * k, 5, 0, Math.PI * 2); ctx.fill(); }
+    // where the head and hips were at address, for comparison
+    const A = res.frames.addr.lm;
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = 'rgba(255,211,77,0.8)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0 + A[LM.nose].x * k, 0); ctx.lineTo(x0 + A[LM.nose].x * k, th); ctx.stroke();
+    ctx.strokeStyle = 'rgba(126,227,107,0.7)';
+    const hx = (A[LM.lHip].x + A[LM.rHip].x) / 2 * k; ctx.beginPath(); ctx.moveTo(x0 + hx, 0); ctx.lineTo(x0 + hx, th); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x0 + ev.tee.x * k, ev.tee.y * k, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#fff'; ctx.font = '600 15px system-ui'; ctx.fillText(name, x0 + 8, th + 18);
+  });
+  const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+  return b ? URL.createObjectURL(b) : null;
+}
+
+function openSwing() {
+  const r = lastSwing;
+  if (!r || !r.ok) { toast('No swing checked yet'); return; }
+  const m = r.metrics, R = (v) => (v == null ? '—' : Math.round(v));
+  $('#swInfo').textContent = `${r.group} · body seen in ${r.used} pictures · scale from ${r.scaleFrom === 'ball' ? 'the ball (add your height in Settings for better accuracy)' : 'your height'}. Yellow dashed line = where your head was at address; green = your hips.`;
+  if (r.img) { $('#swImg').src = r.img; $('#swImg').hidden = false; } else $('#swImg').hidden = true;
+  $('#swTips').innerHTML = (r.tips.length ? r.tips.map((t) => `<div class="tip">${t.text}</div>`).join('') : '<div class="tip good">No clear faults on this swing.</div>') +
+    r.good.map((g) => `<div class="tip good">✓ ${g}</div>`).join('');
+  $('#swMetrics').textContent = [
+    `Stance (centre of ankles)   ${R(m.stanceCm)} cm   (${m.stanceRatio.toFixed(2)} × shoulder width)`,
+    `Ball position               ${R(m.ballPos * 100)}%   (0% = back foot, 100% = front foot)`,
+    `Spine tilt at address       ${R(m.tilt)}°   (+ = away from target)`,
+    `Hands vs ball at address    ${R(m.handsAheadCm)} cm   (+ = ahead of the ball)`,
+    `Head move on backswing      ${R(m.headTopCm)} cm   (− = away from target)`,
+    `Hip move on backswing       ${R(m.hipTopCm)} cm`,
+    `Hips at impact              ${R(m.hipImpCm)} cm   (+ = towards target)`,
+    `Head at impact              ${R(m.headImpCm)} cm`,
+    `Hips at finish vs front foot ${R(m.finishHipCm)} cm`,
+  ].join('\n');
+  openSheet('#swingSheet');
+}
+
+// setup screen: is the whole body in the picture?
+let bodyBusy = false;
+setInterval(async () => {
+  const chip = $('#cBody');
+  if (S.tips !== 'on' || !running || !$('#setup').classList.contains('show')) { chip.hidden = true; return; }
+  if (eng.state === 'armed' || video.videoHeight > video.videoWidth) return; // never compete with a live shot
+  chip.hidden = false;
+  if (!swingCap.pose) { chip.textContent = 'Body check: loading…'; chip.className = 'chip'; swingCap.load().catch(() => { chip.textContent = 'Body check: needs internet once'; }); return; }
+  if (bodyBusy) return;
+  bodyBusy = true;
+  try {
+    const lm = await swingCap.check(eng.w || 960, eng.h || 540);
+    if (!lm) return;
+    const vis = (i) => lm.length && lm[i].v > 0.5;
+    if (!lm.length) { chip.textContent = 'Body: can’t see you — stand at the ball'; chip.className = 'chip warn'; }
+    else if (!vis(0)) { chip.textContent = 'Body: can’t see your head — raise the phone'; chip.className = 'chip bad'; }
+    else if (!vis(27) || !vis(28)) { chip.textContent = 'Body: can’t see your feet'; chip.className = 'chip bad'; }
+    else { chip.textContent = 'Body: head to feet in view ✓'; chip.className = 'chip ok'; }
+  } finally { bodyBusy = false; }
+}, 2000);
+
 // ------------------------------------------------------------ help me fix it
 const MONO = '13px ui-monospace, Menlo, monospace';
 function grayToCanvas(fr, w, h) {
@@ -731,6 +918,8 @@ function reportText(d) {
     L.push('last shots:');
     for (const s of ss) L.push(s.miss ? `  ${s.club} not read` : `  ${s.club}${s.demo ? ' (demo)' : ''} ${(s.speed).toFixed(1)} m/s ${s.launch.toFixed(1)}° dir ${s.dir.toFixed(1)}° → carry ${s.carry.toFixed(0)} m`);
   }
+  if (lastSwing) L.push(lastSwing.ok ? `last swing: tips ${lastSwing.tips.map((t) => t.key).join(', ') || 'none'} · body seen in ${lastSwing.used} pictures · scale ${lastSwing.scaleFrom}` : `last swing: not analysed (${lastSwing.reason})`);
+  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand}`);
   L.push('log (newest last):');
   for (const l of LOG.slice(-60)) L.push('  ' + l);
   return L.join('\n');
@@ -829,9 +1018,12 @@ function renderDebugChip() { const c = $('#cDebug'); c.textContent = `Show what 
 $('#cDebug').addEventListener('click', () => { S.debug = S.debug === 'on' ? 'off' : 'on'; saveSettings(); renderDebugChip(); dbg = null; });
 renderDebugChip();
 
+document.addEventListener('touchend', () => unlockAudio(), { passive: true });
+document.addEventListener('click', () => unlockAudio());
+
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
-  unlockAudio();
+  unlockAudio('Camera on');
   $('#start').classList.add('hide');
   openSetup();
 });
@@ -845,3 +1037,5 @@ if (lastShot) showNumbers(lastShot);
 
 // expose for automated testing
 window.__golf = { eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
+$('#testSoundBtn').addEventListener('click', testSound);
+$('#cSound').addEventListener('click', testSound);

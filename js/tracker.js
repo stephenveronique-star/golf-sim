@@ -376,7 +376,8 @@ export function solveShot(track, tee, cam) {
   const { pts } = track;
   const f = (cam.w / 2) / Math.tan((cam.hfovDeg * Math.PI) / 360);
   const D = BALL.diameter;
-  const Z0 = (f * D) / tee.d;            // camera-to-ball distance, m
+  // camera-to-ball distance: measured by the user if given, else from the ball's size
+  const Z0 = cam.ballDist > 0.5 ? cam.ballDist : (f * D) / tee.d;
   const cx = cam.w / 2, cy = cam.h / 2;
   let t0 = track.tImp;
   let ts, alpha, Zs, X, Y, freeX, freeY;
@@ -597,11 +598,11 @@ export class ShotEngine {
     if (shaken || medMoving > (this.opts.shakeLimit ?? 120)) {
       ev = { type: 'moved', moving: frames.map((f) => f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else if (!track) {
-      ev = { type: 'missed', reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+      ev = { type: 'missed', tNow: this.latest().t, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
-      const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg });
+      const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist });
       if (launch.launch < -3) { ev = { type: 'missed', reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
-      ev = { type: 'shot', launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
+      ev = { type: 'shot', tNow: this.latest().t, launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }
     this.onEvent(ev);
     return ev;
@@ -624,7 +625,9 @@ export class ShotEngine {
     this._cands = next;
     const ready = next.filter((k) => rec.t - k.since >= this.opts.stillTime && k.n >= 4);
     if (!ready.length) return null;
-    ready.sort((a, b) => b.score - a.score);
+    // The ball sits on the ground: of the still, round, bright things, take the
+    // lowest one (a white glove or hands at address are higher up).
+    ready.sort((a, b) => b.y - a.y);
     const best = ready[0];
     const b = locateBall(rec.g, this.w, this.h, best.x, best.y, Math.round(Math.max(8, best.d * 1.5)));
     if (!b) return null;
@@ -634,6 +637,7 @@ export class ShotEngine {
   // After a shot: look for a new ball near the old tee spot; arm once it has
   // sat still for half a second.
   _waitingStep(rec) {
+    if (this.hold) return null;
     const W = this._wait;
     W.n++;
     if (W.n % 3 !== 0) return null;

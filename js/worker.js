@@ -81,6 +81,7 @@ self.onmessage = (e) => {
       opts = { ...opts, ...m.opts };
       engine.opts.hfovDeg = opts.hfovDeg; engine.opts.threshold = opts.threshold;
       if (opts.autoFind != null) engine.opts.autoFind = opts.autoFind;
+      engine.opts.ballDist = +opts.ballDist || 0;
       break;
     case 'track': readTrack(m.track); break;
     case 'frame': onVideoFrame(m.frame); break;
@@ -101,6 +102,7 @@ self.onmessage = (e) => {
       break;
     }
     case 'reset': engine.reset(); status(true); break;
+    case 'hold': engine.hold = !!m.on; break;
     case 'debug': {
       const fr = engine.latest();
       let cands = [];
