@@ -1,7 +1,7 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -12,7 +12,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I',
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on',
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -52,6 +52,7 @@ $$('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target 
 // audio cue + voice
 let audioCtx = null;
 function unlockAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* older iOS */ }
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { /* none */ }
   try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(''); speechSynthesis.speak(u); } } catch { /* none */ }
 }
@@ -188,23 +189,22 @@ let stream = null;
 let running = false;
 let lastCapture = null;
 let firstArm = true;
-let mode = null; // 'worker-track' | 'main-processor' | 'video'
+let mode = null; // 'main-processor' | 'video'
 let mainReader = null;
 const eng = { state: 'idle', fps: 0, procMs: 0, w: 0, h: 0, ball: null, frames: 0 };
 
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 let setBallSeq = 0;
 const pending = new Map();
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW } }); }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off' } }); }
 sendConfig();
 
 worker.onmessage = (e) => {
   const m = e.data;
-  if (m.type === 'status') { Object.assign(eng, m); }
+  if (m.type === 'status') { Object.assign(eng, m); updateReady(); }
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
-  else if (m.type === 'unsupported' && mode === 'worker-track') { console.warn('worker track processing unsupported', m.message); startVideoPath(); }
   else if (m.type === 'error') console.error('worker:', m.message);
 };
 function setBall(x, y) {
@@ -217,16 +217,19 @@ function onEngineEvent(ev) {
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
     setStatus('ready', 'Ready — hit away');
-    $('#setupMsg').textContent = 'Ready — hit away';
+    $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
+    updateReady();
     beep(880, 0.1); setTimeout(() => beep(1320, 0.12), 130);
+    setTimeout(() => say('Ready'), 350);
     if (firstArm && $('#setup').classList.contains('show')) { firstArm = false; setTimeout(() => closeSetup(), 1800); }
   } else if (ev.type === 'shot') {
-    lastCapture = ev; eng.state = 'waiting';
+    lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     if (ev.launch.speed >= 3) recordShot(ev.launch);
   } else if (ev.type === 'missed') {
-    lastCapture = ev; eng.state = 'waiting';
+    lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
+    say('Missed that one');
     shots.push({ id: Date.now(), ts: Date.now(), session, club: S.club, miss: true }); saveShots(); renderList();
     toast('Ball was struck but not seen in flight. Tap “Replay last” to see what the camera saw.', 5000);
     beep(300, 0.25);
@@ -270,17 +273,20 @@ async function startCamera() {
   try { await video.play(); } catch { /* autoplay */ }
   running = true;
   worker.postMessage({ cmd: 'reset' });
+  eng.state = 'idle'; eng.ball = null; eng.frames = 0;
+  updateReady();
   sendConfig();
   // pick the capture path
-  if (typeof MediaStreamTrackProcessor !== 'undefined') {
+  // Chrome: read every camera frame directly. iPhone Safari: read frames from
+  // the video element, which is exactly the picture shown on screen.
+  if (typeof MediaStreamTrackProcessor !== 'undefined' && !/iPhone|iPad|iPod/.test(navigator.userAgent)) {
     startMainProcessor(track.clone());
   } else {
-    mode = 'worker-track';
-    try { const t2 = track.clone(); worker.postMessage({ cmd: 'track', track: t2 }, [t2]); }
-    catch (e) { console.warn('track transfer failed', e); startVideoPath(); }
+    startVideoPath();
   }
+  startWatchdog();
   $('#pip').hidden = false;
-  setStatus('busy', 'Tap the ball');
+  setStatus('busy', 'Looking for the ball');
   populateCameras();
   requestWakeLock();
   requestAnimationFrame(drawLoop);
@@ -345,6 +351,21 @@ function stopCamera() {
   stream = null;
 }
 
+// If no frames reach the analyser, switch to the video-element path.
+let watchdog = null;
+function startWatchdog() {
+  clearInterval(watchdog);
+  let last = -1, still = 0, switched = false;
+  watchdog = setInterval(() => {
+    if (!running) { clearInterval(watchdog); return; }
+    if (eng.frames === last) still++; else { still = 0; last = eng.frames; }
+    if (still >= 3 && video.videoWidth) {
+      if (!switched && mode !== 'video') { switched = true; console.warn('no frames from', mode, '- switching to video'); startVideoPath(); still = 0; }
+      else if (still === 6) toast('The camera picture isn’t reaching the ball tracker. Close the app fully and open it again.', 6000);
+    }
+  }, 700);
+}
+
 async function populateCameras() {
   try {
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
@@ -404,17 +425,42 @@ function drawSetup() {
     ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(126,227,107,0.5)'; ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.moveTo(fit.x, by); ctx.lineTo(fit.x + fit.w, by); ctx.stroke(); ctx.setLineDash([]);
   }
+  if (tapMark && eng.w) {
+    const age = performance.now() - tapMark.t;
+    if (age > 1500) tapMark = null;
+    else {
+      const k = fit.w / eng.w;
+      ctx.globalAlpha = 1 - age / 1500;
+      ctx.strokeStyle = tapMark.ok ? '#7ee36b' : '#ff6b5b'; ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.arc(fit.x + tapMark.x * k, fit.y + tapMark.y * k, 26 * dpr, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
 }
 setupC.addEventListener('click', async (e) => {
-  if (!running || !eng.w) return;
+  if (!running) return;
+  if (!eng.w) { toast('Camera is still starting — try again in a second'); return; }
   const r = setupC.getBoundingClientRect();
   const x = (e.clientX - r.left) * fit.dpr, y = (e.clientY - r.top) * fit.dpr;
   const px = ((x - fit.x) / fit.w) * eng.w, py = ((y - fit.y) / fit.h) * eng.h;
   if (px < 0 || py < 0 || px > eng.w || py > eng.h) return;
   const b = await setBall(px, py);
-  if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); return; }
+  if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); flashTap(px, py, false); return; }
+  flashTap(px, py, true);
   updateChips();
 });
+
+let tapMark = null;
+function flashTap(x, y, ok) { tapMark = { x, y, ok, t: performance.now() }; }
+
+function updateReady() {
+  const st = !running ? 'off' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
+  document.body.dataset.ready = st;
+  const el = $('#readyLight');
+  el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : '';
+  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : '';
+  if (st === 'look' && $('#setup').classList.contains('show') && !tapMark) $('#setupMsg').textContent = 'Put a ball down and step back — I’ll find it (or tap it)';
+}
 
 function updateChips() {
   const fps = eng.fps || 0;
@@ -457,7 +503,7 @@ $('#cLevel').addEventListener('click', async () => {
 
 function openSetup() {
   $('#setup').classList.add('show');
-  $('#setupMsg').textContent = eng.state === 'armed' ? 'Ready — hit away (tap the ball again to re-mark it)' : 'Tap the ball on the screen';
+  $('#setupMsg').textContent = eng.state === 'armed' ? 'Ready — hit away (tap the ball again to re-mark it)' : 'Put a ball down and step back — I’ll find it (or tap it)';
   if (!running) startCamera();
 }
 function closeSetup() { $('#setup').classList.remove('show'); }
@@ -527,14 +573,14 @@ function renderSettings() {
   $$('[data-num]').forEach((i) => { i.value = S[i.dataset.num]; });
   $$('[data-sel]').forEach((i) => { i.value = S[i.dataset.sel]; });
   $('#camSelect').value = S.camId || '';
-  $('#about').textContent = `Golf Sim ${VERSION}. Shots are stored on this phone only.`;
+  $('#about').textContent = `Golf Sim ${VERSION} · capture: ${mode || 'not started'} · camera ${video.videoWidth || 0}×${video.videoHeight || 0} @ ${(eng.fps || 0).toFixed(0)} fps. Shots are stored on this phone only.`;
 }
 $$('.seg[data-set]').forEach((seg) => seg.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  S[seg.dataset.set] = b.dataset.v; saveSettings(); renderSettings(); applyUnits();
+  S[seg.dataset.set] = b.dataset.v; saveSettings(); renderSettings(); applyUnits(); sendConfig();
 }));
 $$('[data-num]').forEach((i) => i.addEventListener('change', () => { const v = parseFloat(i.value); if (!isNaN(v)) { S[i.dataset.num] = v; saveSettings(); sendConfig(); } }));
-$$('[data-sel]').forEach((i) => i.addEventListener('change', () => { S[i.dataset.sel] = i.value; saveSettings(); sendConfig(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; if (running) setStatus('busy', 'Tap the ball'); }));
+$$('[data-sel]').forEach((i) => i.addEventListener('change', () => { S[i.dataset.sel] = i.value; saveSettings(); sendConfig(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; if (running) setStatus('busy', 'Looking for the ball'); }));
 $('#camSelect').addEventListener('change', async (e) => {
   S.camId = e.target.value;
   const label = e.target.selectedOptions[0]?.textContent || '';

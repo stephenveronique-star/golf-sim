@@ -84,6 +84,23 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .actions { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
 .actions .btn { flex: 1; text-align: center; }
 
+
+/* big ready light, readable from the tee */
+.ready-light { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: none; flex-direction: column; align-items: center;
+  padding: 8px 22px; border-radius: 16px; background: rgba(0,0,0,0.55); text-align: center; pointer-events: none; }
+.ready-light b { font-size: 34px; font-weight: 900; letter-spacing: 0.04em; line-height: 1.05; }
+.ready-light span { font-size: 13px; font-weight: 600; color: #dfe; }
+body[data-ready=ready] .ready-light, body[data-ready=tee] .ready-light, body[data-ready=look] .ready-light { display: flex; }
+body[data-ready=ready] .ready-light { background: rgba(40,140,40,0.85); }
+body[data-ready=ready] .ready-light b { font-size: 46px; }
+body[data-ready=tee] .ready-light { background: rgba(200,130,0,0.85); }
+body[data-ready=ready] .app { box-shadow: inset 0 0 0 6px #7ee36b; }
+body[data-ready=tee] .app { box-shadow: inset 0 0 0 6px #ffb44d; }
+.setup::after { content: ''; position: absolute; inset: 0; pointer-events: none; }
+body[data-ready=ready] .setup::after { box-shadow: inset 0 0 0 10px #7ee36b; }
+body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
+.view-toggle { top: auto; bottom: 10px; }
+
 /* overlays */
 .overlay { position: fixed; inset: 0; background: rgba(4,10,6,0.82); display: none; z-index: 20; padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px); }
 .overlay.show { display: flex; align-items: center; justify-content: center; }
@@ -173,6 +190,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="stage">
       <canvas id="range"></canvas>
       <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
+      <div class="ready-light" id="readyLight"><b></b><span></span></div>
       <div class="pip" id="pip" hidden><canvas id="pipCanvas"></canvas><div class="tag" id="pipTag">Camera</div></div>
     </div>
     <div class="side">
@@ -221,7 +239,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="chip" id="cBall">Ball: tap it</div>
     <button class="chip" id="cLevel">Level: tap to check</button>
   </div>
-  <div class="msg" id="setupMsg">Tap the ball on the screen</div>
+  <div class="msg" id="setupMsg">Put a ball down and step back — I’ll find it (or tap it)</div>
   <button class="btn primary done" id="setupDone">Done</button>
 </div>
 
@@ -243,6 +261,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <div class="field"><label>Fairway</label><div class="seg" data-set="firmness"><button data-v="0.6">Soft</button><button data-v="1">Normal</button><button data-v="1.5">Firm</button></div></div>
   <div class="field"><label>Announce carry<span class="hint">Says the distance out loud after each shot</span></label><div class="seg" data-set="voice"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <h3>Camera</h3>
+  <div class="field"><label>Find the ball by itself<span class="hint">Turn off if it locks onto something that isn’t your ball, then tap the ball instead</span></label><div class="seg" data-set="autoFind"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Which camera</label><select id="camSelect"><option value="">Back camera (default)</option></select></div>
   <div class="field"><label>Camera field of view (°)<span class="hint">Main camera ≈ 67, Ultra Wide ≈ 106. Used for direction and distance-to-ball.</span></label><input type="number" data-num="hfov" step="1"></div>
   <div class="field"><label>Processing width (px)<span class="hint">Lower if the processing time shows red</span></label><select data-sel="procW"><option value="640">640</option><option value="960">960</option><option value="1280">1280</option></select></div>
@@ -291,8 +310,9 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <li>Put the phone on a tripod <b>in landscape</b>, about <b>2.5–3.5 m</b> from the ball, facing you, with the lens at about the height of the ball (low tripod, 20–40 cm).</li>
     <li>Keep the phone <b>square to the target line</b> and level. Use <i>Level</i> on the camera screen to check.</li>
     <li>Frame it so the ball sits about a <b>quarter of the way in from the side you hit from</b>, so the screen shows as much of the flight as possible before the net.</li>
-    <li>Tap <b>Camera</b>, then tap the ball on the screen. When it says <b>Ready</b>, hit.</li>
-    <li>After each shot, tee up a new ball in the same spot. The app finds it and gets ready again by itself.</li>
+    <li>Tap <b>Camera</b>, put a ball down and step back. The app finds the ball by itself (or tap it on the screen). When the screen turns <b>green</b> and says <b>“Ready”</b>, hit.</li>
+    <li>After each shot the screen goes <b>orange — Tee up</b>. Put the next ball in the same spot; it turns green and says “Ready” again.</li>
+    <li>No sound? Check the iPhone's silent switch is off and the volume is up.</li>
   </ol>
   <h3>For good readings</h3>
   <ul>
@@ -317,7 +337,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
 </div></div>
 
 <div class="toast" id="toast"></div>
-<video id="video" playsinline muted autoplay style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none"></video>
+<video id="video" playsinline muted autoplay style="position:fixed;left:0;bottom:0;width:320px;height:180px;opacity:0.01;pointer-events:none;z-index:-1"></video>
 
 <script type="module" src="js/app.js"></script>
 </body>

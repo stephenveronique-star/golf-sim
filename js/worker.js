@@ -80,6 +80,7 @@ self.onmessage = (e) => {
     case 'config':
       opts = { ...opts, ...m.opts };
       engine.opts.hfovDeg = opts.hfovDeg; engine.opts.threshold = opts.threshold;
+      if (opts.autoFind != null) engine.opts.autoFind = opts.autoFind;
       break;
     case 'track': readTrack(m.track); break;
     case 'frame': onVideoFrame(m.frame); break;

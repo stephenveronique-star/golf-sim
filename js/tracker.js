@@ -87,6 +87,71 @@ export function locateBall(g, w, h, x, y, searchR = 40) {
   return { x: mo.cx, y: mo.cy, d: Math.max(3, d), contrast, bg };
 }
 
+// ------------------------------------------------ automatic ball finding
+/**
+ * Find small, bright, round blobs that could be a golf ball, anywhere in the
+ * lower part of the frame. Returns [{x, y, d, contrast, score}] best first.
+ */
+export function findBallCandidates(g, w, h, o = {}) {
+  const dMin = o.dMin ?? 5, dMax = o.dMax ?? 26;
+  const T = o.contrast ?? 35;
+  const R = Math.max(8, Math.round(dMax * 1.2));
+  const W1 = w + 1;
+  const ii = new Uint32Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    const gi = y * w, ib = (y + 1) * W1, ia = y * W1;
+    for (let x = 0; x < w; x++) { row += g[gi + x]; ii[ib + x + 1] = ii[ia + x + 1] + row; }
+  }
+  const y0 = Math.round(h * (o.top ?? 0.2));
+  const mask = new Uint8Array(w * h);
+  for (let y = y0; y < h; y++) {
+    const ya = Math.max(0, y - R), yb = Math.min(h, y + R + 1);
+    for (let x = 0; x < w; x++) {
+      const v = g[y * w + x];
+      if (v < 90) continue;
+      const xa = Math.max(0, x - R), xb = Math.min(w, x + R + 1);
+      const sum = ii[yb * W1 + xb] - ii[ya * W1 + xb] - ii[yb * W1 + xa] + ii[ya * W1 + xa];
+      const mean = sum / ((yb - ya) * (xb - xa));
+      if (v - mean > T) mask[y * w + x] = 1;
+    }
+  }
+  const out = [];
+  const stack = [];
+  const aMin = Math.max(3, 0.35 * Math.PI * dMin * dMin / 4), aMax = 1.8 * Math.PI * dMax * dMax / 4 + 40;
+  for (let s = y0 * w; s < mask.length; s++) {
+    if (mask[s] !== 1) continue;
+    let area = 0, minx = w, maxx = 0, miny = h, maxy = 0, sx = 0, sy = 0;
+    stack.length = 0; stack.push(s); mask[s] = 2;
+    while (stack.length) {
+      const i = stack.pop();
+      const x = i % w, y = (i - x) / w;
+      area++; sx += x; sy += y;
+      if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+      if (area > aMax * 3) continue;
+      if (x > 0 && mask[i - 1] === 1) { mask[i - 1] = 2; stack.push(i - 1); }
+      if (x < w - 1 && mask[i + 1] === 1) { mask[i + 1] = 2; stack.push(i + 1); }
+      if (y > 0 && mask[i - w] === 1) { mask[i - w] = 2; stack.push(i - w); }
+      if (y < h - 1 && mask[i + w] === 1) { mask[i + w] = 2; stack.push(i + w); }
+    }
+    let bw = maxx - minx + 1, bh = maxy - miny + 1;
+    let cx = sx / area, cy = sy / area;
+    // ball sitting on a white tee: blob is taller than wide; use the top part
+    if (bh > bw * 1.3 && bh < bw * 4) { cx = minx + bw / 2; cy = miny + bw / 2; bh = bw; area = Math.min(area, bw * bw); }
+    if (area < aMin || area > aMax) continue;
+    if (bw < dMin * 0.6 || bw > dMax * 1.4 || bh < dMin * 0.6 || bh > dMax * 1.4) continue;
+    if (Math.min(bw, bh) / Math.max(bw, bh) < 0.6) continue;
+    const fill = area / (bw * bh);
+    if (fill < 0.45) continue;
+    const b = locateBall(g, w, h, cx, cy, Math.max(6, Math.round(Math.max(bw, bh))));
+    if (!b || b.d < dMin || b.d > dMax || b.contrast < T) continue;
+    if (Math.hypot(b.x - cx, b.y - cy) > Math.max(bw, bh)) continue;
+    out.push({ x: b.x, y: b.y, d: b.d, contrast: b.contrast, score: b.contrast * fill });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out.slice(0, 8);
+}
+
 function extractPatch(g, w, h, cx, cy, hp) {
   const n = 2 * hp + 1;
   const p = new Float32Array(n * n);
@@ -348,7 +413,7 @@ export function solveShot(track, tee, cam) {
  */
 export class ShotEngine {
   constructor(opts = {}) {
-    this.opts = { hfovDeg: 67, bufferSeconds: 0.7, maxFrames: 64, ...opts };
+    this.opts = { hfovDeg: 67, bufferSeconds: 0.7, maxFrames: 64, autoFind: true, stillTime: 1.0, ...opts };
     this.onEvent = opts.onEvent || (() => {});
     this.w = 0; this.h = 0;
     this.buf = []; // {g, t, score}
@@ -360,7 +425,7 @@ export class ShotEngine {
     this._dts = [];
   }
 
-  reset() { this.state = 'idle'; this.ball = null; this.buf = []; }
+  reset() { this.state = 'idle'; this.ball = null; this.buf = []; this._cands = []; this._autoN = 0; }
 
   _store(g, t) {
     const n = this.w * this.h;
@@ -386,7 +451,7 @@ export class ShotEngine {
     return this.ball;
   }
 
-  _arm(b, g) {
+  _arm(b, g, how = 'tap') {
     const hp = Math.max(4, Math.round(b.d * 0.95));
     this.ball = { ...b, hp, patch: extractPatch(g, this.w, this.h, b.x, b.y, hp) };
     this.state = 'armed';
@@ -394,7 +459,8 @@ export class ShotEngine {
     this.absent = 0;
     this.lastPresentT = null;
     this.lastPresentRec = null;
-    const ev = { type: 'armed', ball: { x: b.x, y: b.y, d: b.d } };
+    this._cands = [];
+    const ev = { type: 'armed', how, ball: { x: b.x, y: b.y, d: b.d } };
     this.onEvent(ev);
     return ev;
   }
@@ -410,6 +476,7 @@ export class ShotEngine {
     const rec = this._store(g, t);
     if (this.state === 'armed') return this._armedStep(rec);
     if (this.state === 'waiting') return this._waitingStep(rec);
+    if (this.state === 'idle' && this.opts.autoFind) return this._autoStep(rec, null, 1.0);
     return null;
   }
 
@@ -475,6 +542,8 @@ export class ShotEngine {
     const snap = this.buf.slice(Math.max(0, i0 - 1), i1 + 2).map((f) => ({ t: f.t, g: f.g.slice() }));
     this.state = 'waiting';
     this._wait = { since: null, cand: null, n: 0 };
+    this._shotT = this.latest().t;
+    this._cands = [];
     let ev;
     if (!track) {
       ev = { type: 'missed', reason: 'ball-not-found', frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
@@ -484,6 +553,30 @@ export class ShotEngine {
     }
     this.onEvent(ev);
     return ev;
+  }
+
+  // Look for a still, bright, round ball; arm when one stays put for stillTime.
+  _autoStep(rec, filter, every) {
+    this._autoN = (this._autoN || 0) + 1;
+    const stride = Math.max(1, Math.round((this.fps || 60) / 10 * every));
+    if (this._autoN % stride !== 0) return null;
+    const dMax = Math.max(12, Math.round(this.w * 0.03));
+    let c = findBallCandidates(rec.g, this.w, this.h, { dMin: Math.max(4, this.w * 0.005), dMax, contrast: this.opts.autoContrast ?? 35 });
+    if (filter) c = c.filter(filter);
+    const prev = this._cands || [];
+    const next = [];
+    for (const k of c) {
+      const m = prev.find((p) => Math.hypot(p.x - k.x, p.y - k.y) < Math.max(2, k.d * 0.25) && Math.abs(p.d - k.d) < k.d * 0.35);
+      next.push({ ...k, since: m ? m.since : rec.t, n: m ? m.n + 1 : 1 });
+    }
+    this._cands = next;
+    const ready = next.filter((k) => rec.t - k.since >= this.opts.stillTime && k.n >= 4);
+    if (!ready.length) return null;
+    ready.sort((a, b) => b.score - a.score);
+    const best = ready[0];
+    const b = locateBall(rec.g, this.w, this.h, best.x, best.y, Math.round(Math.max(8, best.d * 1.5)));
+    if (!b) return null;
+    return this._arm(b, rec.g, 'auto');
   }
 
   // After a shot: look for a new ball near the old tee spot; arm once it has
@@ -500,11 +593,19 @@ export class ShotEngine {
       const fine = bestNcc(rec.g, this.w, this.h, coarse.x, coarse.y, b.hp, b.patch, 2, 1);
       if (fine.score > 0.62) hit = fine;
     }
-    if (!hit) { W.cand = null; W.since = null; return null; }
+    if (!hit) {
+      W.cand = null; W.since = null;
+      // a ball that looks different (other brand, new tee height): find it by shape
+      if (this.opts.autoFind && rec.t - this._shotT > 1.5) {
+        const R2 = b.d * 6;
+        return this._autoStep(rec, (k) => Math.hypot(k.x - b.x, k.y - b.y) < R2 && k.d > b.d * 0.6 && k.d < b.d * 1.6, 1 / 3);
+      }
+      return null;
+    }
     if (W.cand && Math.hypot(hit.x - W.cand.x, hit.y - W.cand.y) <= Math.max(1.5, b.d * 0.25)) {
       if (rec.t - W.since >= 0.5) {
         const nb = locateBall(rec.g, this.w, this.h, hit.x, hit.y, Math.round(b.d * 1.5));
-        if (nb && Math.abs(nb.d - b.d) < b.d * 0.4) return this._arm(nb, rec.g);
+        if (nb && Math.abs(nb.d - b.d) < b.d * 0.4) return this._arm(nb, rec.g, 'retee');
       }
     } else {
       W.cand = hit; W.since = rec.t;
