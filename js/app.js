@@ -1,7 +1,7 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -255,11 +255,13 @@ function onEngineEvent(ev) {
     setStatus('busy', 'Tee up next ball');
     const L = ev.launch;
     log(`SHOT speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
+    if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) recordShot(ev.launch);
   } else if (ev.type === 'missed') {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     say('Missed that one');
+    if ($('#setup').classList.contains('show')) closeSetup();
     log(`MISSED ball left the tee but wasn't found in flight · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     shots.push({ id: Date.now(), ts: Date.now(), session, club: S.club, miss: true }); saveShots(); renderList();
     toast('Ball was struck but not seen in flight. Tap “Replay last” to see what the camera saw.', 5000);
