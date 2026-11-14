@@ -3,7 +3,7 @@ import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, LM } from './swing.js';
 
-const VERSION = '1.4.2';
+const VERSION = '1.4.3';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -78,7 +78,6 @@ try { if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoicesch
 
 // Must be called from a tap: iPhone only allows sound after the user has touched the page.
 function unlockAudio(first) {
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* older iOS */ }
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     audioCtx.resume();
@@ -384,6 +383,12 @@ async function startCamera() {
   $('#pip').hidden = false;
   video.srcObject = stream;
   try { await video.play(); } catch { /* autoplay */ }
+  try {
+    const vt = stream.getVideoTracks()[0];
+    vt.onmute = () => log('camera track MUTED by the iPhone');
+    vt.onunmute = () => log('camera track live again');
+    vt.onended = () => { log('camera track ENDED'); if (running) setTimeout(() => startCamera(), 300); };
+  } catch { /* ignore */ }
   running = true;
   worker.postMessage({ cmd: 'reset' });
   eng.state = 'idle'; eng.ball = null; eng.frames = 0;
@@ -427,8 +432,36 @@ const grab = document.createElement('canvas');
 const gctx = grab.getContext('2d', { willReadFrequently: true });
 const freeBufs = [];
 let tsMode = null, lastTs = -1;
-let lastCb = 0, backupOn = false, lastSig = -1;
+let lastCb = 0, backupOn = false, lastSig = -1, staleCount = 0, lastFreshPic = 0, freezeCount = 0, lastRestart = 0;
+// If the camera picture stops changing, the iPhone has paused it (it can do
+// this when sound starts, or when the screen layout changes). Nudge it, then
+// restart the camera if needed.
+let freezeTimer = null;
+function startFreezeWatch() {
+  clearInterval(freezeTimer);
+  lastFreshPic = performance.now();
+  let nudged = false;
+  freezeTimer = setInterval(async () => {
+    if (!running || document.hidden || mode !== 'video') return;
+    const age = performance.now() - lastFreshPic;
+    if (age < 600) { nudged = false; return; }
+    if (!nudged) {
+      nudged = true; freezeCount++;
+      log(`camera picture FROZEN (${Math.round(age)} ms, video ${video.paused ? 'paused' : 'playing'}, track ${stream?.getVideoTracks()[0]?.muted ? 'muted' : 'live'}) — restarting the picture`);
+      try { await video.play(); } catch { /* ignore */ }
+      return;
+    }
+    if (age > 2000 && performance.now() - lastRestart > 8000) {
+      lastRestart = performance.now();
+      log('camera picture still frozen — restarting the camera');
+      toast('The camera picture froze — restarting it…', 3000);
+      await startCamera();
+    }
+  }, 250);
+}
+
 function startVideoPath() {
+  startFreezeWatch();
   mode = 'video'; tsMode = null; lastTs = -1; lastCb = performance.now();
   // Main route: one callback per new camera frame.
   if (video.requestVideoFrameCallback) {
@@ -469,11 +502,11 @@ function grabFrame(now, meta) {
   if (grab.width !== W || grab.height !== H) { grab.width = W; grab.height = H; freeBufs.length = 0; }
   gctx.drawImage(video, 0, 0, W, H);
   const d = gctx.getImageData(0, 0, W, H).data;
-  if (!meta) { // backup reader: skip if this is the same camera frame as last time
-    let sig = 0; for (let i = 0; i < d.length; i += 4 * 211) sig = (sig * 31 + d[i] + d[i + 1]) | 0;
-    if (sig === lastSig) return;
-    lastSig = sig;
-  }
+  // Fingerprint the picture. A real camera picture always changes a little
+  // (sensor noise); an identical one means the picture has frozen.
+  let sig = 0; for (let i = 0; i < d.length; i += 4 * 211) sig = (sig * 31 + d[i] + d[i + 1]) | 0;
+  if (sig === lastSig) { staleCount++; return; }
+  lastSig = sig; lastFreshPic = performance.now();
   let buf = freeBufs.pop();
   if (!buf || buf.byteLength !== W * H) buf = new ArrayBuffer(W * H);
   const g = new Uint8Array(buf);
@@ -773,6 +806,8 @@ function applyUnits() {
 }
 
 
+video.addEventListener('pause', () => { if (running) { log('camera picture paused by the iPhone — resuming'); video.play().catch(() => { /* ignore */ }); } });
+
 // ------------------------------------------------------------ swing check
 const swingCap = new SwingCapture(video, log);
 let lastSwing = null;
@@ -918,6 +953,7 @@ function reportText(d) {
   L.push(`GOLF SIM REPORT · ${new Date().toLocaleString()}`);
   L.push(`version ${VERSION} · capture ${mode || 'not started'} · camera ${running ? 'on' : 'off'}`);
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
+  L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
   L.push(`settings: club ${S.club} · ${S.dist}/${S.speed} · alt ${S.altitude} m · ${S.tempC}°C · fov ${S.hfov}° · width ${S.procW} · sensitivity ${S.threshold} · auto-find ${S.autoFind} · speed adj ${S.speedCal}% · aim ${S.aim}°`);
   L.push(`screen ${innerWidth}×${innerHeight} · ${screen.orientation ? screen.orientation.type : ''} · ${navigator.userAgent}`);
