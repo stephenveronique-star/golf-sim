@@ -3,7 +3,7 @@ import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, LM } from './swing.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.4.1';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -620,9 +620,9 @@ function updateReady() {
   document.body.dataset.ready = st;
   const el = $('#readyLight');
   el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : st === 'turn' ? 'TURN PHONE SIDEWAYS' : '';
-  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : st === 'turn' ? 'The camera only works in landscape' : '';
+  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : st === 'turn' ? 'Already sideways? Rotation lock is on — swipe down from the top-right corner and tap the 🔒 button to turn it off' : '';
   if ($('#setup').classList.contains('show') && st !== lastReadySt) {
-    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : st === 'turn' ? 'Turn the phone sideways (landscape) — the camera only works that way' : 'Put a ball down and step back — I’ll find it (or tap it)';
+    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : st === 'turn' ? 'Turn the phone sideways. Already sideways? Turn off rotation lock: swipe down from the top-right corner, tap the 🔒 button' : 'Put a ball down and step back — I’ll find it (or tap it)';
   }
   lastReadySt = st;
 }
