@@ -1079,6 +1079,8 @@ $('#startGuide').addEventListener('click', () => openSheet('#helpSheet'));
 
 renderClubs();
 applyUnits();
+$('#startNote').textContent = `Version ${VERSION} · works best in Safari on iPhone, in landscape, outdoors in daylight.`;
+$('#brandVer').textContent = 'v' + VERSION;
 const lastShot = sessionShots().filter((s) => !s.miss).pop();
 if (lastShot) showNumbers(lastShot);
 
