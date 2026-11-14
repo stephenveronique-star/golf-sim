@@ -274,6 +274,32 @@ export function findMovers(prev, cur, next, w, h, tee, opts = {}) {
   return blobs;
 }
 
+/**
+ * Did the whole picture shift between two frames? Compares small patches of
+ * ground near the bottom of the frame, which should never move during a shot.
+ * Returns {dx, dy, agree} — agree = how many patches saw the same shift.
+ */
+export function globalShift(gA, gB, w, h) {
+  const hp = Math.max(8, Math.round(w / 80)), R = Math.max(10, Math.round(w / 40));
+  const ys = [0.8, 0.9].map((f) => Math.round(h * f));
+  const xs = [0.12, 0.3, 0.5, 0.7, 0.88].map((f) => Math.round(w * f));
+  const shifts = [];
+  for (const y of ys) for (const x of xs) {
+    if (y + hp + R >= h || y - hp - R < 0) continue;
+    const P = extractPatch(gA, w, h, x, y, hp);
+    let sd = 0; for (let i = 0; i < P.length; i++) sd += P[i] * P[i];
+    const r = bestNcc(gB, w, h, x, y, hp, P, R, 1);
+    if (r.score > 0.6) shifts.push({ dx: r.x - x, dy: r.y - y });
+  }
+  if (!shifts.length) return { dx: 0, dy: 0, agree: 0, n: 0 };
+  let best = { dx: 0, dy: 0, agree: 0 };
+  for (const a of shifts) {
+    const agree = shifts.filter((b) => Math.abs(b.dx - a.dx) <= 2 && Math.abs(b.dy - a.dy) <= 2).length;
+    if (agree > best.agree) best = { dx: a.dx, dy: a.dy, agree };
+  }
+  return { ...best, n: shifts.length };
+}
+
 // ----------------------------------------------------------- track fitting
 function lsLine(ts, vs) {
   const n = ts.length;
@@ -459,6 +485,7 @@ export class ShotEngine {
     this.absent = 0;
     this.lastPresentT = null;
     this.lastPresentRec = null;
+    this.armedT = this.latest() ? this.latest().t : 0;
     this._cands = [];
     const ev = { type: 'armed', how, ball: { x: b.x, y: b.y, d: b.d } };
     this.onEvent(ev);
@@ -494,6 +521,17 @@ export class ShotEngine {
     if (s > 0.72) {
       this.onset = null; this.absent = 0; this.lastPresentT = rec.t; this.lastPresentRec = rec;
       return null;
+    }
+    if (s < 0.6 && this.onset == null) {
+      // Has the whole picture shifted a little (phone nudged, tripod settling)?
+      // Then the ball is still there, just somewhere close by: follow it.
+      const b = this.ball;
+      const r = bestNcc(rec.g, this.w, this.h, b.x, b.y, b.hp, b.patch, Math.max(4, Math.round(b.d * 2)), 1);
+      if (r.score > 0.75) {
+        b.x = r.x; b.y = r.y; this.lastPresentT = rec.t; this.lastPresentRec = rec;
+        this.onEvent({ type: 'nudged', ball: { x: b.x, y: b.y, d: b.d } });
+        return null;
+      }
     }
     if (s < 0.5) {
       if (this.onset == null) this.onset = rec;
@@ -543,13 +581,26 @@ export class ShotEngine {
     const snap = this.buf.slice(Math.max(0, i0 - 1), i1 + 2).map((f) => ({ t: f.t, g: f.g.slice() }));
     this.state = 'waiting';
     this._wait = { since: null, cand: null, n: 0 };
+    // Lots of movement everywhere = the phone moved, not a golf shot.
+    const counts = frames.map((f) => f.blobs.length).sort((p, q) => p - q);
+    const medMoving = counts.length ? counts[counts.length >> 1] : 0;
     this._shotT = this.latest().t;
     this._cands = [];
+    // Compare the ground before the ball left with later frames.
+    const pre = this.buf[Math.max(0, onsetIdx - 1)].g;
+    let shaken = false;
+    for (const k of [Math.min(this.buf.length - 1, onsetIdx + 2), i1]) {
+      const gs = globalShift(pre, this.buf[k].g, this.w, this.h);
+      if (gs.agree >= 3 && Math.hypot(gs.dx, gs.dy) >= 2) { shaken = true; break; }
+    }
     let ev;
-    if (!track) {
+    if (shaken || medMoving > (this.opts.shakeLimit ?? 120)) {
+      ev = { type: 'moved', moving: frames.map((f) => f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+    } else if (!track) {
       ev = { type: 'missed', reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
       const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg });
+      if (launch.launch < -3) { ev = { type: 'missed', reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
       ev = { type: 'shot', launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }
     this.onEvent(ev);

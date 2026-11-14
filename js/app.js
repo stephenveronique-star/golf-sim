@@ -1,7 +1,7 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 
-const VERSION = '1.2.3';
+const VERSION = '1.3.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -257,6 +257,14 @@ function onEngineEvent(ev) {
     log(`SHOT speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) recordShot(ev.launch);
+  } else if (ev.type === 'moved') {
+    eng.state = 'waiting'; updateReady();
+    log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
+    toast('The phone moved, so that wasn’t counted as a shot. Finding the ball again — keep the tripod steady.', 5000);
+  } else if (ev.type === 'nudged') {
+    eng.ball = ev.ball;
+    const now = performance.now();
+    if (!window.__lastNudgeLog || now - window.__lastNudgeLog > 3000) { window.__lastNudgeLog = now; log(`phone nudged — following the ball to ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)}`); }
   } else if (ev.type === 'missed') {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
@@ -319,6 +327,7 @@ async function startCamera() {
     const want = maxFps >= 119 ? 120 : Math.min(60, maxFps);
     await track.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: want, min: Math.min(30, want) } });
   } catch { /* keep what we have */ }
+  $('#pip').hidden = false;
   video.srcObject = stream;
   try { await video.play(); } catch { /* autoplay */ }
   running = true;
@@ -363,20 +372,39 @@ const grab = document.createElement('canvas');
 const gctx = grab.getContext('2d', { willReadFrequently: true });
 const freeBufs = [];
 let tsMode = null, lastTs = -1;
+let lastCb = 0, backupOn = false, lastSig = -1;
 function startVideoPath() {
-  mode = 'video'; tsMode = null; lastTs = -1;
-  const step = (now, meta) => {
+  mode = 'video'; tsMode = null; lastTs = -1; lastCb = performance.now();
+  // Main route: one callback per new camera frame.
+  if (video.requestVideoFrameCallback) {
+    const step = (now, meta) => {
+      if (!running || mode !== 'video') return;
+      lastCb = performance.now();
+      if (backupOn) { backupOn = false; log('frame callbacks are back'); }
+      try { grabFrame(now, meta); } catch (e) { console.error(e); }
+      video.requestVideoFrameCallback(step);
+    };
+    video.requestVideoFrameCallback(step);
+  }
+  // Backup route: iPhone sometimes stops those callbacks when the video isn't
+  // on show. Then read the picture on every screen refresh instead, skipping
+  // repeats of the same camera frame.
+  const backup = () => {
     if (!running || mode !== 'video') return;
-    try { grabFrame(now, meta); } catch (e) { console.error(e); }
-    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(step); else requestAnimationFrame((n) => step(n, null));
+    if (!video.requestVideoFrameCallback || performance.now() - lastCb > 120) {
+      if (!backupOn && video.requestVideoFrameCallback) { backupOn = true; log('frame callbacks stopped — using backup frame reader'); }
+      try { grabFrame(performance.now(), null); } catch (e) { console.error(e); }
+    }
+    requestAnimationFrame(backup);
   };
-  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(step); else requestAnimationFrame((n) => step(n, null));
+  requestAnimationFrame(backup);
 }
 function grabFrame(now, meta) {
   let t;
   if (meta) {
-    if (tsMode == null) tsMode = meta.captureTime ? 'capture' : (meta.mediaTime > 0 ? 'media' : 'now');
-    t = tsMode === 'capture' ? meta.captureTime / 1000 : tsMode === 'media' ? meta.mediaTime : now / 1000;
+    // captureTime shares the performance.now() clock, so it mixes safely with the backup reader
+    if (tsMode == null) tsMode = meta.captureTime ? 'capture' : 'now';
+    t = tsMode === 'capture' && meta.captureTime ? meta.captureTime / 1000 : now / 1000;
   } else t = now / 1000;
   if (t === lastTs || !video.videoWidth) return;
   lastTs = t;
@@ -386,6 +414,11 @@ function grabFrame(now, meta) {
   if (grab.width !== W || grab.height !== H) { grab.width = W; grab.height = H; freeBufs.length = 0; }
   gctx.drawImage(video, 0, 0, W, H);
   const d = gctx.getImageData(0, 0, W, H).data;
+  if (!meta) { // backup reader: skip if this is the same camera frame as last time
+    let sig = 0; for (let i = 0; i < d.length; i += 4 * 211) sig = (sig * 31 + d[i] + d[i + 1]) | 0;
+    if (sig === lastSig) return;
+    lastSig = sig;
+  }
   let buf = freeBufs.pop();
   if (!buf || buf.byteLength !== W * H) buf = new ArrayBuffer(W * H);
   const g = new Uint8Array(buf);
@@ -409,6 +442,7 @@ function startWatchdog() {
   let last = -1, still = 0, switched = false;
   watchdog = setInterval(() => {
     if (!running) { clearInterval(watchdog); return; }
+    if (document.hidden) { still = 0; return; }
     if (eng.frames === last) still++; else { still = 0; last = eng.frames; }
     if (still >= 3 && video.videoWidth) {
       if (!switched && mode !== 'video') { switched = true; console.warn('no frames from', mode, '- switching to video'); log(`no frames from ${mode} — switched to video path`); startVideoPath(); still = 0; }
@@ -443,7 +477,7 @@ function drawPip() {
   const dpr = Math.min(2, devicePixelRatio || 1);
   if (pipC.width !== Math.round(r.width * dpr)) { pipC.width = Math.round(r.width * dpr); pipC.height = Math.round(r.height * dpr); }
   const ctx = pipC.getContext('2d');
-  ctx.drawImage(video, 0, 0, pipC.width, pipC.height);
+  ctx.clearRect(0, 0, pipC.width, pipC.height); // the live video shows underneath
   if (eng.ball && eng.w) {
     const k = pipC.width / eng.w;
     ctx.strokeStyle = eng.state === 'armed' ? '#7ee36b' : '#ffd34d'; ctx.lineWidth = 2;
@@ -550,8 +584,9 @@ function updateChips() {
   if (eng.ball && eng.w) {
     const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
     const dist = (f * BALL.diameter) / eng.ball.d;
-    cb.textContent = `Ball ${eng.ball.d.toFixed(0)} px · about ${dist.toFixed(1)} m away`;
-    cb.className = 'chip ' + (eng.ball.d >= 7 && eng.ball.d <= 24 ? 'ok' : 'warn');
+    const tooClose = dist < 2.2, tooFar = dist > 4.2;
+    cb.textContent = `Ball ${eng.ball.d.toFixed(0)} px · about ${dist.toFixed(1)} m away${tooClose ? ' — too close, move the phone back to 2.5–3.5 m' : tooFar ? ' — too far, move closer' : ''}`;
+    cb.className = 'chip ' + (tooClose || tooFar ? 'bad' : 'ok');
   } else { cb.textContent = 'Ball: tap it'; cb.className = 'chip'; }
 }
 
