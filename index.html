@@ -130,6 +130,20 @@ body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .swings .row-sw .go { color: var(--accent); font-weight: 700; align-self: center; }
 .swings canvas { width: auto; max-width: 100%; max-height: 52vh; border-radius: 10px; background: #000; display: block; margin: 6px auto; }
 .swings .ctrl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.swings .btn.tog.on { background: #24361f; border-color: var(--accent); color: var(--accent); }
+.swings .ctrl .spacer { flex: 1; }
+.swings .phases .btn { padding: 6px 9px; font-size: 13px; }
+.swings #seqImg { width: 100%; border-radius: 10px; -webkit-touch-callout: default; }
+.swings .goal select { margin-top: 8px; width: 100%; }
+.swings #goalChart { width: 100%; max-width: 100%; height: 140px; max-height: none; display: block; margin: 8px 0 4px; background: transparent; border-radius: 0; }
+.swings .goalstats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.swings .goalstats b { color: #fff; }
+.swings .sub { color: var(--muted); font-size: 13px; }
+#swTips2 .drill { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #3c5a32; color: #cfe3d4; font-size: 13px; }
+.tips .scoreline { display: flex; align-items: baseline; gap: 4px; margin: 2px 0; }
+.tips .scoreline b { font-size: 24px; }
+.tips .scoreline span { color: var(--muted); }
+.tips .scoreline em { margin-left: auto; font-style: normal; color: var(--muted); font-size: 13px; }
 .swings .summary { background: #0a140d; border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0; font-size: 14px; }
 
 /* overlays */
@@ -303,6 +317,8 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <div class="field"><label>Swing tips<span class="hint">After each shot, checks your stance, ball position, sway and weight shift</span></label><div class="seg" data-set="tips"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Your height (cm)<span class="hint">Makes the measurements in cm accurate</span></label><input type="number" data-num="heightCm" step="1" min="120" max="220" placeholder="e.g. 180"></div>
   <div class="field"><label>You play</label><div class="seg" data-set="hand"><button data-v="right">Right-handed</button><button data-v="left">Left-handed</button><button data-v="auto">Auto</button></div></div>
+  <div class="field"><label>Where is the phone?<span class="hint">Facing you = ball distance + swing checks. Behind you (down the line) = posture, early extension, head height — swing only, no ball distance.</span></label><div class="seg" data-set="view"><button data-v="face">Facing me</button><button data-v="dtl">Behind me</button></div></div>
+  <div class="field"><label>Replay after each shot<span class="hint">Shows your swing in slow motion straight after the shot. Closes by itself when the next ball is ready.</span></label><div class="seg" data-set="autoReplay"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <h3>Camera</h3>
   <div class="field"><label>Find the ball by itself<span class="hint">Turn off if it locks onto something that isn’t your ball, then tap the ball instead</span></label><div class="seg" data-set="autoFind"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Which camera</label><select id="camSelect"><option value="">Back camera (default)</option></select></div>
@@ -368,7 +384,13 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <li>A shank or toe-hit for a right-hander goes toward the phone. Keep the tripod a little further back, or put a small screen in front of it, once you're comfortable with the setup.</li>
   </ul>
   <h3>Swing tips</h3>
-  <p>After each shot the app looks at your body in the pictures (on the phone — nothing is sent anywhere) and checks: <b>stance width</b> and <b>ball position</b> for the club, <b>head and hip sway</b> on the backswing, <b>weight shift</b> at impact and your <b>finish</b>. The first time, it downloads the body-tracking files (about 20 MB). Put your <b>height</b> and <b>right/left-handed</b> in Settings › My swing. Your whole body, head to feet, needs to be in the picture — the camera screen shows “Body: head to feet in view ✓” when it is. Tap <b>See swing</b> under the tips to see the four positions with your body outline.</p>
+  <p>After each shot the app looks at your body in the pictures (on the phone — nothing is sent anywhere) and checks: <b>stance width</b> and <b>ball position</b> for the club, <b>head and hip sway</b> on the backswing, <b>weight shift</b> at impact, your <b>finish</b> and your <b>tempo</b> (backswing time ÷ downswing time — good players are about 3 : 1). You get a <b>swing score out of 10</b>, the top tips, and a <b>drill</b> for each fault. The first time, it downloads the body-tracking files (about 20 MB). Put your <b>height</b> and <b>right/left-handed</b> in Settings › My swing. Your whole body, head to feet, needs to be in the picture — the camera screen shows “Body: head to feet in view ✓” when it is.</p>
+  <h3>Replay, sequence, compare</h3>
+  <p>After each shot your swing <b>replays in slow motion</b> by itself (turn off in Settings › My swing). It closes by itself when the next ball is ready. In the replay: <b>Angles</b> shows your knee, arm and spine angles; <b>／ Line</b> and <b>∠ Angle</b> let you draw on the picture (tap two or three points); <b>▦ Sequence</b> makes one picture of the 8 swing positions you can share or save; <b>☆ Mark as best</b> keeps your best swings at the top; <b>⚖︎ Compare</b> puts two swings side by side, lined up at impact. The 🎥 button at the top opens all your saved swings (the last 25).</p>
+  <h3>Training goal</h3>
+  <p>In 🎥 My swings, pick <b>one thing to work on</b> (e.g. “Less hip slide”, “Tempo of 3 : 1”). The chart shows every swing — green dots are on target — with how many sessions and what percentage of swings are on target.</p>
+  <h3>Filming from behind (down the line)</h3>
+  <p>Settings › My swing › Where is the phone › <b>Behind me</b>. Put the phone on the tripod about 3 m <b>straight behind you</b>, at hip height, pointing at the target, with your whole body in view. It then checks your <b>posture</b> (forward bend and knee flex), <b>distance from the ball</b>, <b>early extension</b> (hips moving toward the ball) and whether your <b>head rises or dips</b>. In this mode it doesn’t measure ball distance — switch back to <b>Facing me</b> for that.</p>
   <h3>What's measured and what's estimated</h3>
   <p>Ball speed and launch angle are measured from the ball's flight across the screen. Direction is estimated from how the ball's size changes as it flies toward or away from the phone, so treat left/right as a guide. Spin, club speed and curve are estimated. Carry and total come from a ball-flight model fitted to tour launch-monitor data, adjusted for your altitude and temperature.</p>
 </div></div>
@@ -393,18 +415,6 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <pre id="dText"></pre>
 </div></div>
 
-<!-- swing view -->
-<div class="overlay" id="swingSheet"><div class="sheet diag">
-  <button class="btn ghost close" data-close>Close</button>
-  <h2>Swing check</h2>
-  <p class="kv" id="swInfo"></p>
-  <img id="swImg" alt="Swing positions">
-  <div id="swTips"></div>
-  <h3>Measurements</h3>
-  <pre id="swMetrics"></pre>
-  <p class="kv">These are rules of thumb measured from one camera facing you — a guide, not a coach. Body tracking runs on your phone; nothing is sent anywhere.</p>
-</div></div>
-
 <!-- my swings -->
 <div class="overlay" id="swingsSheet"><div class="sheet diag swings">
   <button class="btn ghost close" data-close>Close</button>
@@ -419,14 +429,31 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
       <button class="btn primary" id="swPlay">❚❚ Pause</button>
       <button class="btn" id="swNext">▶︎</button>
       <div class="seg" id="swSpeed"><button data-v="0.25">¼×</button><button data-v="0.5" class="on">½×</button><button data-v="1">1×</button></div>
-      <button class="btn" id="swSkel">Outline: on</button>
+      <button class="btn tog on" id="swSkel">Outline</button>
+      <button class="btn tog on" id="swAngles">Angles</button>
     </div>
     <input type="range" id="swSlider" min="0" max="1000" value="0" style="width:100%">
-    <div class="ctrl" id="swPhases"></div>
+    <div class="ctrl phases" id="swPhases"></div>
+    <div class="ctrl">
+      <button class="btn tog" id="swLine">／ Line</button>
+      <button class="btn tog" id="swAngle">∠ Angle</button>
+      <button class="btn ghost" id="swClear">Clear drawings</button>
+      <span class="spacer"></span>
+      <button class="btn" id="swSeqBtn">▦ Sequence</button>
+      <button class="btn" id="swCompare">⚖︎ Compare</button>
+      <button class="btn" id="swBest">☆ Mark as best</button>
+    </div>
+    <div id="cmpPick" class="summary" hidden><b>Compare with which swing?</b> <span class="sub">⭐ best swings first. They’re lined up at impact.</span><div id="cmpList"></div><button class="btn ghost" id="cmpCancel">Cancel</button></div>
     <div id="swTips2"></div>
     <h3>Measurements</h3>
     <pre id="swMetrics2"></pre>
     <button class="btn ghost" id="swDelete">Delete this swing</button>
+  </div>
+  <div id="swSeq" hidden>
+    <button class="btn ghost" id="seqBack">‹ Back to the replay</button>
+    <p class="kv">Your swing in 8 positions. Share it to WhatsApp or your coach, or press and hold the picture to save it to Photos.</p>
+    <img id="seqImg" alt="Swing sequence">
+    <div class="ctrl"><button class="btn primary" id="seqShare">Share / Save</button></div>
   </div>
 </div></div>
 

@@ -605,15 +605,16 @@ export class ShotEngine {
       const gs = globalShift(pre, this.buf[k].g, this.w, this.h);
       if (gs.agree >= 3 && Math.hypot(gs.dx, gs.dy) >= 2) { shaken = true; break; }
     }
+    const tOnset = this.onset ? this.onset.t - 0.5 / (this.fps || 60) : this.latest().t;
     let ev;
     if (shaken || medMoving > (this.opts.shakeLimit ?? 120)) {
-      ev = { type: 'moved', moving: frames.map((f) => f.blobs.totalCount ?? f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+      ev = { type: 'moved', tNow: this.latest().t, tOnset, moving: frames.map((f) => f.blobs.totalCount ?? f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else if (!track) {
-      ev = { type: 'missed', tNow: this.latest().t, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+      ev = { type: 'missed', tNow: this.latest().t, tOnset, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
       const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist });
-      if (launch.launch < -3 || launch.launch > 62 || launch.speed > 95) { ev = { type: 'missed', reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
-      ev = { type: 'shot', tNow: this.latest().t, launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
+      if (launch.launch < -3 || launch.launch > 62 || launch.speed > 95) { ev = { type: 'missed', tNow: this.latest().t, tOnset, reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
+      ev = { type: 'shot', tNow: this.latest().t, tOnset, launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }
     this.onEvent(ev);
     return ev;

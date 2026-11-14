@@ -12,7 +12,7 @@ let reader = null;
 // last 3.8 s), made here so the page itself never has to grab extra pictures.
 let snaps = [], lastSnapT = -1;
 function keepSnap(g, w, h, t) {
-  if (t - lastSnapT < 0.095) return;
+  if (t - lastSnapT < 0.045) return; // ~20 a second
   lastSnapT = t;
   const w2 = w >> 1, h2 = h >> 1;
   const out = new Uint8Array(w2 * h2);

@@ -82,13 +82,15 @@ export class SwingCapture {
       if (pics.length) await this.landmarks(pics[0].bmp);
       const frames = [];
       const t0 = performance.now();
-      // Look at every other picture across the whole swing first, then fill
-      // in the gaps if there's time — a slow phone still covers address to finish.
-      const order = [];
-      for (let i = 0; i < pics.length; i += 2) order.push(i);
-      for (let i = 1; i < pics.length; i += 2) order.push(i);
+      // Coarse to fine: every 8th picture across the whole swing first, then
+      // every 4th, 2nd, and the rest if there's time — a slow phone still
+      // covers address to finish, a fast one gets every picture.
+      const order = [], seen = new Set();
+      for (const step of [8, 4, 2, 1]) for (let i = 0; i < pics.length; i += step) if (!seen.has(i)) { seen.add(i); order.push(i); }
+      let budget = 6500;
+      try { budget = +localStorage.getItem('golfsim.poseBudget') || budget; } catch { /* default */ }
       for (const i of order) {
-        if (performance.now() - t0 > 6000) break;
+        if (performance.now() - t0 > budget) break;
         const p = pics[i];
         const lm = await this.landmarks(p.bmp);
         frames.push({ t: p.t, lm: lm ? lm.map((q) => ({ x: q.x * w, y: q.y * h, v: q.visibility ?? 1 })) : null });

@@ -1,7 +1,7 @@
 // Saved swings (pictures + body outline + results) in the phone's browser
 // storage (IndexedDB). Keeps the most recent swings only.
 
-const DB = 'golfsim', STORE = 'swings', KEEP = 30;
+const DB = 'golfsim', STORE = 'swings', KEEP = 25;
 let dbp = null;
 
 function open() {
