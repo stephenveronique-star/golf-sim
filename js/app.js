@@ -2,8 +2,9 @@ import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL }
 import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, LM } from './swing.js';
+import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.4.3';
+const VERSION = '1.5.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -119,7 +120,7 @@ function testSound() {
   beep(880, 0.12); setTimeout(() => beep(1320, 0.14), 150);
   setTimeout(() => say('Sound check. One, two, three.', true), 400);
   log(`test sound pressed · speech ${'speechSynthesis' in window ? 'available' : 'missing'} · audio ${audioCtx ? audioCtx.state : 'none'}`);
-  setTimeout(() => { if (speechOk !== true) toast('If you heard nothing: check the silent switch on the side of the iPhone is off and the volume is up, then try again.', 7000); }, 2600);
+  setTimeout(() => toast('Heard the beep but no voice? Your iPhone is on silent (🔕 next to the clock). iPhones mute speech in silent mode — turn silent mode off with the switch/Action button on the side or in Control Centre.', 9000), 2600);
 }
 
 // ------------------------------------------------------------ range + numbers
@@ -171,7 +172,7 @@ function renderList() {
       if (!w.ok) { h += `<div class="row miss" style="${cols}"><div class="club">${s.club}</div><div style="grid-column: span 4">${w.note || 'not seen'}</div></div>`; continue; }
       const m = w.m;
       const sg = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v}`);
-      h += `<div class="row" style="${cols}"><div class="club">${s.club}</div><div>${m.stanceCm}cm</div><div>${m.ballPct}%</div><div>${sg(m.headTopCm)}</div><div>${sg(m.hipImpCm)}</div></div>`;
+      h += `<div class="row" data-sw="${s.id}" style="${cols};cursor:pointer"><div class="club">${s.club} ▶︎</div><div>${m.stanceCm}cm</div><div>${m.ballPct}%</div><div>${sg(m.headTopCm)}</div><div>${sg(m.hipImpCm)}</div></div>`;
       if (w.tips && w.tips.length) h += `<div class="row" style="grid-template-columns:1fr;color:var(--accent2);font-size:12px;border:0;padding-top:0">↳ ${w.tips.map((t) => t.short).join(' · ')}</div>`;
     }
     h += '<div class="empty">Ball = position between your feet (0% back foot, 100% front foot). Head = how far it moved on the backswing (− = away from target). Hips = how far they moved towards the target by impact.</div>';
@@ -192,6 +193,7 @@ function renderList() {
   }
 }
 $('#list').addEventListener('click', (e) => {
+  const sw = e.target.closest('[data-sw]'); if (sw) { openSwings(+sw.dataset.sw); return; }
   const id = e.target.getAttribute('data-del');
   if (!id) return;
   shots = shots.filter((s) => String(s.id) !== id); saveShots(); renderList(); refreshRange();
@@ -260,21 +262,49 @@ let mode = null; // 'main-processor' | 'video'
 let mainReader = null;
 const eng = { state: 'idle', fps: 0, procMs: 0, w: 0, h: 0, ball: null, frames: 0 };
 
-const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+let worker = null, lastWorkerMsg = performance.now(), workerRestarts = 0;
+function makeWorker() {
+  worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  worker.onmessage = onWorkerMessage;
+  worker.onerror = (e) => log(`ERROR worker crashed: ${e.message || 'unknown'}`);
+  lastWorkerMsg = performance.now();
+}
 let setBallSeq = 0;
 const pending = new Map();
 function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: +S.ballDist || 0, teeSpot: S.teeSpot || null } }); }
-sendConfig();
-
-worker.onmessage = (e) => {
+function onWorkerMessage(e) {
   const m = e.data;
+  lastWorkerMsg = performance.now();
   if (m.type === 'status') { Object.assign(eng, m); updateReady(); }
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
   else if (m.type === 'error') { console.error('worker:', m.message); log(`ERROR worker: ${m.message}`); }
   else if (m.type === 'debug') { const r = pendingDebug.get(m.id); pendingDebug.delete(m.id); if (r) r(m); }
-};
+  else if (m.type === 'snaps') { const r = pendingSnaps.get(m.id); pendingSnaps.delete(m.id); if (r) r(m.frames); }
+}
+const pendingSnaps = new Map(); let snapSeq = 0;
+function workerSnaps(t0, t1) {
+  const id = ++snapSeq;
+  return new Promise((res) => { pendingSnaps.set(id, res); worker.postMessage({ cmd: 'snaps', id, t0, t1 }); setTimeout(() => { if (pendingSnaps.has(id)) { pendingSnaps.delete(id); res([]); } }, 3000); });
+}
+makeWorker();
+sendConfig();
+// If the shot detector stops answering while camera pictures are flowing,
+// replace it with a fresh one (it finds the ball again at the tee spot).
+setInterval(() => {
+  if (!running || document.hidden) return;
+  const picsFlowing = performance.now() - lastFreshPic < 1000 || mode === 'main-processor';
+  if (picsFlowing && performance.now() - lastWorkerMsg > 3000) {
+    workerRestarts++;
+    log(`shot detector stopped answering for ${Math.round((performance.now() - lastWorkerMsg) / 1000)} s — restarting it (#${workerRestarts})`);
+    try { worker.terminate(); } catch { /* ignore */ }
+    makeWorker(); sendConfig();
+    eng.state = 'idle'; eng.ball = null; updateReady();
+    if (mode === 'main-processor' && stream) startMainProcessor(stream.getVideoTracks()[0].clone());
+    toast('Restarted the shot detector — finding the ball again', 3000);
+  }
+}, 1000);
 const pendingDebug = new Map();
 let debugSeq = 0;
 function workerDebug() {
@@ -442,7 +472,7 @@ function startFreezeWatch() {
   lastFreshPic = performance.now();
   let nudged = false;
   freezeTimer = setInterval(async () => {
-    if (!running || document.hidden || mode !== 'video') return;
+    if (!running || document.hidden || mode !== 'video' || swingCap.busy) { lastFreshPic = Math.max(lastFreshPic, performance.now() - 300); return; }
     const age = performance.now() - lastFreshPic;
     if (age < 600) { nudged = false; return; }
     if (!nudged) {
@@ -555,7 +585,6 @@ function drawLoop(now) {
   if ($('#setup').classList.contains('show')) { if (now - lastPip > 100) { lastPip = now; drawSetup(); } }
   else if (now - lastPip > 100) { lastPip = now; drawPip(); }
   if (now - lastChips > 400) { lastChips = now; updateChips(); }
-  if (S.tips === 'on') swingCap.tick(now / 1000);
   requestAnimationFrame(drawLoop);
 }
 
@@ -826,25 +855,35 @@ const NOTES = {
 function setTips(html) { const el = $('#tips'); el.hidden = !html; el.innerHTML = html || ''; }
 
 async function runSwingCheck(ev, rec) {
-  const offset = performance.now() / 1000 - ev.tNow; // tracker clock -> this page's clock
-  const tImp = ev.track.tImp + offset;
+  // everything here uses the shot detector's clock
+  const tImp = ev.track.tImp;
+  const offset = performance.now() / 1000 - ev.tNow;
   setTips('<div class="h">Swing check</div><div class="note">Checking your swing…</div>');
-  await sleep(Math.max(0, (tImp + 1.1 - performance.now() / 1000) * 1000));
-  let res;
+  await sleep(Math.max(0, (tImp + offset + 1.1 - performance.now() / 1000) * 1000));
+  let res, frames = [], pics = [];
   worker.postMessage({ cmd: 'hold', on: true }); // don't get ready for the next ball until this is done
   const unhold = setTimeout(() => worker.postMessage({ cmd: 'hold', on: false }), 8000);
   try {
-    const { frames, pics } = await swingCap.analyse(tImp, ev.w, ev.h);
+    pics = SwingCapture.toPics(await workerSnaps(tImp - 2.3, tImp + 1.05));
+    ({ frames } = await swingCap.analyse(pics, ev.w, ev.h));
     const sgn = S.hand === 'right' ? 1 : S.hand === 'left' ? -1 : (ev.launch.targetSign || 1);
     res = analyseSwing(frames, { tImp, ball: ev.tee, club: rec.club, s: sgn, heightCm: +S.heightCm || 0 });
     res.img = res.ok ? await swingPicture(res, pics, ev) : null;
   } catch (e) { res = { ok: false, reason: 'load', error: String(e.message || e) }; }
   finally { clearTimeout(unhold); worker.postMessage({ cmd: 'hold', on: false }); }
   lastSwing = res;
+  // save the swing so it can be watched again (even if the body check failed)
+  if (pics.length) {
+    swingCap.busy = true; // keep the pictures while we save them
+    try { await storeSwing(rec, res, frames, pics, ev, tImp); lastSwingId = rec.id; log(`swing saved for replay (${pics.length} pictures)`); }
+    catch (e) { log(`couldn't save swing for replay: ${e.message || e}`); }
+    finally { swingCap.busy = false; }
+  }
   if (!res.ok) {
     log(`SWING not analysed: ${res.reason}${res.error ? ' ' + res.error : ''} (body seen in ${res.seen ?? 0} pictures)`);
     rec.swing = { ok: false, note: NOTES[res.reason] || 'not seen' };
-    setTips(`<div class="h">Swing check</div><div class="note">${NOTES[res.reason] || 'Couldn’t check that swing.'}</div>`);
+    setTips(`<div class="h">Swing check ${pics.length ? '<button id="tipsMore">Watch swing ›</button>' : ''}</div><div class="note">${NOTES[res.reason] || 'Couldn’t check that swing.'}</div>`);
+    $('#tipsMore')?.addEventListener('click', () => openSwings(lastSwingId));
   } else {
     const m = res.metrics;
     const r = (v) => (v == null ? null : Math.round(v));
@@ -853,10 +892,10 @@ async function runSwingCheck(ev, rec) {
     log(`SWING ${rec.club}: stance ${r(m.stanceCm)} cm (×${m.stanceRatio.toFixed(2)} shoulders) · ball ${r(m.ballPos * 100)}% · tilt ${r(m.tilt)}° · head back ${r(m.headTopCm)} · hips back ${r(m.hipTopCm)} · hips at impact ${r(m.hipImpCm)} · finish ${r(m.finishHipCm)} · scale ${res.scaleFrom} · tips: ${res.tips.map((t) => t.key).join(', ') || 'none'}`);
     const top = res.tips.slice(0, 2);
     const noHeight = !(+S.heightCm);
-    setTips(`<div class="h">Swing check <button id="tipsMore">See swing ›</button></div>` +
+    setTips(`<div class="h">Swing check <button id="tipsMore">Watch swing ›</button></div>` +
       (top.length ? `<ul>${top.map((t) => `<li>${t.short}</li>`).join('')}</ul>` : `<div class="ok">Looks good — ${res.good.slice(0, 2).join(' · ') || 'no clear faults'}</div>`) +
       (noHeight ? '<div class="note">Add your height in Settings for accurate cm.</div>' : ''));
-    $('#tipsMore')?.addEventListener('click', openSwing);
+    $('#tipsMore')?.addEventListener('click', () => (lastSwingId ? openSwings(lastSwingId) : openSwing()));
     if (top.length) setTimeout(() => say(`Tip: ${top[0].short}`), 2200);
   }
   saveShots(); if (tab === 'swing') renderList();
@@ -937,6 +976,148 @@ setInterval(async () => {
   } finally { bodyBusy = false; }
 }, 2000);
 
+
+// ------------------------------------------------------------ my swings (replay + history)
+let lastSwingId = null;
+async function storeSwing(rec, res, frames, pics, ev, tImp) {
+  const W = 480, k = W / ev.w;
+  const c = document.createElement('canvas'); c.width = W; c.height = Math.round(ev.h * k);
+  const ctx = c.getContext('2d');
+  const out = [];
+  for (const p of pics) {
+    ctx.drawImage(p.bmp, 0, 0, c.width, c.height);
+    const jpg = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.72));
+    const f = frames.find((q) => q.t === p.t);
+    out.push({ t: +(p.t - tImp).toFixed(3), jpg, lm: f && f.lm ? f.lm.map((q) => [Math.round(q.x * k), Math.round(q.y * k), +q.v.toFixed(2)]) : null });
+  }
+  const r = res && res.ok ? res : null;
+  const rel = (v) => (v == null ? null : +(v - tImp).toFixed(3));
+  await saveSwing({
+    id: rec.id, ts: rec.ts, club: rec.club, carry: rec.carry, total: rec.total, speed: rec.speed, launch: rec.launch,
+    ok: !!r, reason: r ? null : (res && res.reason) || 'unknown',
+    tips: r ? r.tips.map((t) => ({ key: t.key, short: t.short, text: t.text })) : [], good: r ? r.good : [],
+    metrics: r ? r.metrics : null, group: r ? r.group : null, scaleFrom: r ? r.scaleFrom : null,
+    phases: r ? { addr: rel(r.phases.addr), top: rel(r.phases.top), imp: rel(r.phases.imp), fin: rel(r.phases.fin) } : null,
+    addrLm: r ? r.frames.addr.lm.map((q) => [Math.round(q.x * k), Math.round(q.y * k)]) : null,
+    tee: { x: ev.tee.x * k, y: ev.tee.y * k }, w: c.width, h: c.height, frames: out,
+  });
+}
+
+const fmtWhen = (ts) => { const d = new Date(ts); const today = new Date().toDateString() === d.toDateString(); return (today ? 'Today ' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ') + d.toTimeString().slice(0, 5); };
+
+async function openSwings(id) {
+  openSheet('#swingsSheet');
+  stopPlayer();
+  if (id) return openPlayer(id);
+  $('#swPlayer').hidden = true; $('#swList').hidden = false; $('#swHead').textContent = 'My swings';
+  let list = [];
+  try { list = await listSwings(); } catch (e) { $('#swList').innerHTML = `<div class="empty">Couldn’t open saved swings (${e.message || e}).</div>`; return; }
+  if (!list.length) { $('#swList').innerHTML = '<div class="empty">No swings saved yet. Every shot the app reads is saved here with a slow-motion replay and your swing check (keep “Swing tips” on in Settings).</div>'; return; }
+  // averages over the recent checked swings
+  const ok = list.filter((r) => r.ok && r.metrics).slice(0, 10);
+  let sum = '';
+  if (ok.length) {
+    const avg = (f) => { const v = ok.map(f).filter((x) => x != null && isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    const R = (v, u = '') => (v == null ? '—' : `${Math.round(v)}${u}`);
+    const counts = {};
+    for (const r of ok) for (const t of r.tips) counts[t.short] = (counts[t.short] || 0) + 1;
+    const common = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 2);
+    sum = `<div class="summary"><b>Your last ${ok.length} checked swing${ok.length > 1 ? 's' : ''}</b><br>
+      Stance ${R(avg((r) => r.metrics.stanceCm), ' cm')} · ball position ${R(avg((r) => r.metrics.ballPos * 100), '%')} · head on backswing ${R(avg((r) => r.metrics.headTopCm), ' cm')} · hips at impact ${R(avg((r) => r.metrics.hipImpCm), ' cm')}<br>
+      ${common.length ? `Most common: ${common.map(([t, n]) => `<span style="color:var(--accent2)">${t}</span> (${n}×)`).join(', ')}` : '<span class="ok" style="color:var(--accent)">No repeated faults</span>'}</div>`;
+  }
+  $('#swList').innerHTML = sum + list.map((r) => `<div class="row-sw" data-sw="${r.id}"><div><b>${clubById(r.club).name}</b> · ${fmtDist(r.carry || 0)} ${dUnit()} <span class="sub">· ${fmtWhen(r.ts)}</span><div class="${r.ok ? 'tip' : 'sub'}">${r.ok ? (r.tips.length ? r.tips.slice(0, 2).map((t) => t.short).join(' · ') : '✓ Looks good') : 'Swing not checked — ' + (NOTES[r.reason] || 'body not seen')}</div></div><div class="go">▶︎</div></div>`).join('');
+}
+$('#swList').addEventListener('click', (e) => { const row = e.target.closest('[data-sw]'); if (row) openPlayer(+row.dataset.sw); });
+$('#swingsBtn').addEventListener('click', () => openSwings());
+$('#swBack').addEventListener('click', () => openSwings());
+
+const P = { rec: null, bmps: [], t: 0, playing: true, speed: 0.5, skel: true, raf: 0, last: 0, hold: 0 };
+function stopPlayer() { cancelAnimationFrame(P.raf); P.raf = 0; for (const b of P.bmps) { try { b && b.close(); } catch { /* ignore */ } } P.bmps = []; P.rec = null; }
+
+async function openPlayer(id) {
+  stopPlayer();
+  $('#swList').hidden = true; $('#swPlayer').hidden = false;
+  const r = await getSwing(id);
+  if (!r) { $('#swTitle').textContent = 'That swing is no longer saved.'; return; }
+  P.rec = r; P.t = r.frames[0].t; P.playing = true; P.last = performance.now(); P.hold = 0;
+  $('#swHead').textContent = `${clubById(r.club).name} · ${fmtDist(r.carry || 0)} ${dUnit()}`;
+  $('#swTitle').textContent = `${fmtWhen(r.ts)} · ball speed ${(r.speed / MPH).toFixed(0)} mph · launch ${r.launch.toFixed(0)}°${r.ok ? '' : ' · swing not checked: ' + (NOTES[r.reason] || 'body not seen')}`;
+  P.bmps = await Promise.all(r.frames.map((f) => createImageBitmap(f.jpg).catch(() => null)));
+  const c = $('#swCanvas'); c.width = r.w; c.height = r.h;
+  // jump buttons for the four positions
+  const ph = r.phases || {};
+  $('#swPhases').innerHTML = [['Address', ph.addr], ['Top', ph.top], ['Impact', ph.imp != null ? ph.imp : 0], ['Finish', ph.fin]].filter((x) => x[1] != null)
+    .map(([n, t]) => `<button class="btn" data-t="${t}">${n}</button>`).join('');
+  $('#swTips2').innerHTML = r.ok ? ((r.tips.length ? r.tips.map((t) => `<div class="tip">${t.text}</div>`).join('') : '<div class="tip good">No clear faults on this swing.</div>') + (r.good || []).map((g) => `<div class="tip good">✓ ${g}</div>`).join('')) : '';
+  const m = r.metrics, R = (v) => (v == null ? '—' : Math.round(v));
+  $('#swMetrics2').textContent = m ? [
+    `Stance (centre of ankles)    ${R(m.stanceCm)} cm  (${m.stanceRatio.toFixed(2)} × shoulder width)`,
+    `Ball position                ${R(m.ballPos * 100)}%  (0% back foot, 100% front foot)`,
+    `Spine tilt at address        ${R(m.tilt)}°  (+ = away from target)`,
+    `Hands vs ball at address     ${R(m.handsAheadCm)} cm  (+ = ahead)`,
+    `Head move on backswing       ${R(m.headTopCm)} cm  (− = away from target)`,
+    `Hip move on backswing        ${R(m.hipTopCm)} cm`,
+    `Hips at impact               ${R(m.hipImpCm)} cm  (+ = towards target)`,
+    `Head at impact               ${R(m.headImpCm)} cm`,
+    `Hips at finish vs front foot ${R(m.finishHipCm)} cm`,
+    `Scale from ${r.scaleFrom === 'ball' ? 'the ball — add your height in Settings for better accuracy' : 'your height'}`,
+  ].join('\n') : 'No measurements — the body wasn’t seen clearly in this swing.';
+  $('#swPlay').textContent = '❚❚ Pause';
+  P.raf = requestAnimationFrame(playerLoop);
+}
+
+function frameAt(t) { const fr = P.rec.frames; let i = 0; while (i + 1 < fr.length && fr[i + 1].t <= t + 1e-6) i++; return i; }
+function drawPlayer() {
+  const r = P.rec; if (!r) return;
+  const c = $('#swCanvas'), ctx = c.getContext('2d');
+  const i = frameAt(P.t), f = r.frames[i], b = P.bmps[i];
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
+  if (b) ctx.drawImage(b, 0, 0, c.width, c.height);
+  if (r.addrLm) { // where the head and hips were at address
+    const A = r.addrLm; ctx.setLineDash([5, 5]); ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,211,77,0.85)'; ctx.beginPath(); ctx.moveTo(A[0][0], 0); ctx.lineTo(A[0][0], c.height); ctx.stroke();
+    const hx = (A[23][0] + A[24][0]) / 2; ctx.strokeStyle = 'rgba(126,227,107,0.75)'; ctx.beginPath(); ctx.moveTo(hx, 0); ctx.lineTo(hx, c.height); ctx.stroke(); ctx.setLineDash([]);
+  }
+  if (P.skel && f.lm) {
+    ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    for (const [a, bb] of BONES) { const p = f.lm[a], q = f.lm[bb]; if (!p || !q || p[2] < 0.3 || q[2] < 0.3) continue; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); }
+    const n = f.lm[0]; if (n && n[2] > 0.3) { ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(n[0], n[1], 5, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, 150, 24);
+  const ph = r.phases || {};
+  const near = [['Address', ph.addr], ['Top', ph.top], ['Impact', 0], ['Finish', ph.fin]].find(([, t]) => t != null && Math.abs(t - f.t) < 0.06);
+  ctx.fillStyle = '#fff'; ctx.font = '600 14px system-ui';
+  ctx.fillText(`${f.t >= 0 ? '+' : ''}${f.t.toFixed(2)} s${near ? ' · ' + near[0] : ''}`, 8, 17);
+  const span = r.frames[r.frames.length - 1].t - r.frames[0].t || 1;
+  $('#swSlider').value = Math.round(((P.t - r.frames[0].t) / span) * 1000);
+}
+function playerLoop(now) {
+  const r = P.rec; if (!r) return;
+  const dt = Math.min(0.1, (now - P.last) / 1000); P.last = now;
+  if (P.playing) {
+    if (P.hold > 0) P.hold -= dt;
+    else {
+      P.t += dt * P.speed;
+      const end = r.frames[r.frames.length - 1].t;
+      if (P.t > end) { P.t = r.frames[0].t; P.hold = 0.6; }
+    }
+  }
+  drawPlayer();
+  P.raf = requestAnimationFrame(playerLoop);
+}
+$('#swPlay').addEventListener('click', () => { P.playing = !P.playing; $('#swPlay').textContent = P.playing ? '❚❚ Pause' : '▶︎ Play'; });
+const stepFrame = (d) => { if (!P.rec) return; P.playing = false; $('#swPlay').textContent = '▶︎ Play'; const i = Math.max(0, Math.min(P.rec.frames.length - 1, frameAt(P.t) + d)); P.t = P.rec.frames[i].t; };
+$('#swPrev').addEventListener('click', () => stepFrame(-1));
+$('#swNext').addEventListener('click', () => stepFrame(1));
+$('#swSpeed').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; P.speed = +b.dataset.v; $$('#swSpeed button').forEach((x) => x.classList.toggle('on', x === b)); });
+$('#swSkel').addEventListener('click', () => { P.skel = !P.skel; $('#swSkel').textContent = `Outline: ${P.skel ? 'on' : 'off'}`; });
+$('#swSlider').addEventListener('input', (e) => { if (!P.rec) return; P.playing = false; $('#swPlay').textContent = '▶︎ Play'; const r = P.rec, span = r.frames[r.frames.length - 1].t - r.frames[0].t; P.t = r.frames[0].t + (+e.target.value / 1000) * span; });
+$('#swPhases').addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (!b) return; P.playing = false; $('#swPlay').textContent = '▶︎ Play'; P.t = +b.dataset.t; });
+$('#swDelete').addEventListener('click', async () => { if (!P.rec) return; const id = P.rec.id; await deleteSwing(id); log('swing deleted'); openSwings(); });
+// closing the sheet stops the player
+$('#swingsSheet').addEventListener('click', (e) => { if (e.target.id === 'swingsSheet' || e.target.hasAttribute('data-close')) stopPlayer(); });
+
 // ------------------------------------------------------------ help me fix it
 const MONO = '13px ui-monospace, Menlo, monospace';
 function grayToCanvas(fr, w, h) {
@@ -953,7 +1134,7 @@ function reportText(d) {
   L.push(`GOLF SIM REPORT · ${new Date().toLocaleString()}`);
   L.push(`version ${VERSION} · capture ${mode || 'not started'} · camera ${running ? 'on' : 'off'}`);
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
-  L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount}`);
+  L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount} · detector restarts ${workerRestarts}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
   L.push(`settings: club ${S.club} · ${S.dist}/${S.speed} · alt ${S.altitude} m · ${S.tempC}°C · fov ${S.hfov}° · width ${S.procW} · sensitivity ${S.threshold} · auto-find ${S.autoFind} · speed adj ${S.speedCal}% · aim ${S.aim}°`);
   L.push(`screen ${innerWidth}×${innerHeight} · ${screen.orientation ? screen.orientation.type : ''} · ${navigator.userAgent}`);

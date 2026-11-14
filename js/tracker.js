@@ -271,6 +271,8 @@ export function findMovers(prev, cur, next, w, h, tee, opts = {}) {
     }
     blobs.push({ x: mo.cx, y: mo.cy, d: mo.minor, len: mo.major, area, peak, dist });
   }
+  blobs.totalCount = blobs.length;
+  if (blobs.length > 30) { blobs.sort((a, b) => b.peak * b.area - a.peak * a.area); blobs.length = 30; }
   return blobs;
 }
 
@@ -316,6 +318,7 @@ function lsLine(ts, vs) {
  * starting at the tee. frames: [{t, blobs}] in time order.
  */
 export function fitTrack(frames, tee, opts = {}) {
+  let work = 0; const budget = opts.budget ?? 400000;
   const d = tee.d;
   const tMin = opts.tMinImpact ?? -Infinity;
   const pxToM = BALL.diameter / d;
@@ -326,6 +329,7 @@ export function fitTrack(frames, tee, opts = {}) {
         const dt = frames[j].t - frames[i].t;
         if (dt <= 0) continue;
         for (const b of frames[j].blobs) {
+          if (++work > budget) return best;
           const vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt;
           const v = Math.hypot(vx, vy);
           const vms = v * pxToM;
@@ -582,13 +586,15 @@ export class ShotEngine {
     // impact can't be before the last frame that clearly showed the ball
     const before = this.buf[Math.max(0, onsetIdx - 1)];
     const tMin = this.lastPresentT != null ? Math.min(this.lastPresentT, before.t) - 0.5 / this.fps : -Infinity;
-    const track = fitTrack(frames, b, { tMinImpact: tMin });
+    const fullCounts = frames.map((f) => f.blobs.totalCount ?? f.blobs.length).sort((p, q) => p - q);
+    const wholePictureMoved = fullCounts.length && fullCounts[fullCounts.length >> 1] > (this.opts.shakeLimit ?? 120);
+    const track = wholePictureMoved ? null : fitTrack(frames, b, { tMinImpact: tMin });
     // snapshot of the frames used, for replay
     const snap = this.buf.slice(Math.max(0, i0 - 1), i1 + 2).map((f) => ({ t: f.t, g: f.g.slice() }));
     this.state = 'waiting';
     this._wait = { since: null, cand: null, n: 0 };
     // Lots of movement everywhere = the phone moved, not a golf shot.
-    const counts = frames.map((f) => f.blobs.length).sort((p, q) => p - q);
+    const counts = frames.map((f) => f.blobs.totalCount ?? f.blobs.length).sort((p, q) => p - q);
     const medMoving = counts.length ? counts[counts.length >> 1] : 0;
     this._shotT = this.latest().t;
     this._cands = [];
@@ -601,12 +607,12 @@ export class ShotEngine {
     }
     let ev;
     if (shaken || medMoving > (this.opts.shakeLimit ?? 120)) {
-      ev = { type: 'moved', moving: frames.map((f) => f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+      ev = { type: 'moved', moving: frames.map((f) => f.blobs.totalCount ?? f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else if (!track) {
       ev = { type: 'missed', tNow: this.latest().t, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
       const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist });
-      if (launch.launch < -3) { ev = { type: 'missed', reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
+      if (launch.launch < -3 || launch.launch > 62 || launch.speed > 95) { ev = { type: 'missed', reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
       ev = { type: 'shot', tNow: this.latest().t, launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }
     this.onEvent(ev);

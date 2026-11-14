@@ -119,8 +119,18 @@ body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .tips li { margin: 2px 0; }
 .tips .ok { color: var(--accent); }
 .tips .note { color: var(--muted); }
-#swTips .tip { background: #24361f; border: 1px solid #3c5a32; border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
-#swTips .tip.good { background: transparent; border-color: var(--line); color: var(--muted); }
+#swTips .tip, #swTips2 .tip { background: #24361f; border: 1px solid #3c5a32; border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+#swTips .tip.good, #swTips2 .tip.good { background: transparent; border-color: var(--line); color: var(--muted); }
+
+
+.swings .row-sw { display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 10px 6px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.swings .row-sw b { font-size: 15px; }
+.swings .row-sw .sub { color: var(--muted); font-size: 13px; }
+.swings .row-sw .tip { color: var(--accent2); font-size: 13px; }
+.swings .row-sw .go { color: var(--accent); font-weight: 700; align-self: center; }
+.swings canvas { width: auto; max-width: 100%; max-height: 52vh; border-radius: 10px; background: #000; display: block; margin: 6px auto; }
+.swings .ctrl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.swings .summary { background: #0a140d; border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0; font-size: 14px; }
 
 /* overlays */
 .overlay { position: fixed; inset: 0; background: rgba(4,10,6,0.82); display: none; z-index: 20; padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px); }
@@ -205,6 +215,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <button class="btn club-btn" id="clubBtn">7 Iron</button>
     <button class="btn" id="cameraBtn">Camera</button>
     <button class="icon-btn" id="helpBtn" aria-label="Setup guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg></button>
+    <button class="icon-btn" id="swingsBtn" aria-label="My swings" title="My swings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg></button>
     <button class="icon-btn" id="diagBtn" aria-label="Help me fix it" title="Help me fix it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </div>
@@ -392,6 +403,31 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   <h3>Measurements</h3>
   <pre id="swMetrics"></pre>
   <p class="kv">These are rules of thumb measured from one camera facing you — a guide, not a coach. Body tracking runs on your phone; nothing is sent anywhere.</p>
+</div></div>
+
+<!-- my swings -->
+<div class="overlay" id="swingsSheet"><div class="sheet diag swings">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2 id="swHead">My swings</h2>
+  <div id="swList"></div>
+  <div id="swPlayer" hidden>
+    <button class="btn ghost" id="swBack">‹ All swings</button>
+    <p class="kv" id="swTitle"></p>
+    <canvas id="swCanvas"></canvas>
+    <div class="ctrl">
+      <button class="btn" id="swPrev">◀︎</button>
+      <button class="btn primary" id="swPlay">❚❚ Pause</button>
+      <button class="btn" id="swNext">▶︎</button>
+      <div class="seg" id="swSpeed"><button data-v="0.25">¼×</button><button data-v="0.5" class="on">½×</button><button data-v="1">1×</button></div>
+      <button class="btn" id="swSkel">Outline: on</button>
+    </div>
+    <input type="range" id="swSlider" min="0" max="1000" value="0" style="width:100%">
+    <div class="ctrl" id="swPhases"></div>
+    <div id="swTips2"></div>
+    <h3>Measurements</h3>
+    <pre id="swMetrics2"></pre>
+    <button class="btn ghost" id="swDelete">Delete this swing</button>
+  </div>
 </div></div>
 
 <!-- replay -->

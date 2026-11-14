@@ -8,6 +8,22 @@ let canvas = null, ctx = null, gray = null;
 let procMs = 0, frames = 0, lastStatus = 0;
 let reader = null;
 
+// Small grey copies of the camera picture for the swing check (~10 a second,
+// last 3.8 s), made here so the page itself never has to grab extra pictures.
+let snaps = [], lastSnapT = -1;
+function keepSnap(g, w, h, t) {
+  if (t - lastSnapT < 0.095) return;
+  lastSnapT = t;
+  const w2 = w >> 1, h2 = h >> 1;
+  const out = new Uint8Array(w2 * h2);
+  for (let y = 0; y < h2; y++) {
+    const r0 = 2 * y * w, r1 = r0 + w, o = y * w2;
+    for (let x = 0; x < w2; x++) { const i = 2 * x; out[o + x] = (g[r0 + i] + g[r0 + i + 1] + g[r1 + i] + g[r1 + i + 1]) >> 2; }
+  }
+  snaps.push({ t, w: w2, h: h2, g: out });
+  while (snaps.length && t - snaps[0].t > 3.8) snaps.shift();
+}
+
 engine.onEvent = (ev) => {
   const out = { ...ev };
   const transfer = [];
@@ -40,6 +56,7 @@ function processSource(src, sw, sh, t) {
   const d = ctx.getImageData(0, 0, W, H).data;
   for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = ((d[i] * 2 + d[i + 1] + d[i + 2] * 2) * 51) >> 8;
   engine.pushFrame(gray, W, H, t);
+  keepSnap(gray, W, H, t);
   procMs = procMs * 0.9 + (performance.now() - t0) * 0.1;
   frames++;
   status(false);
@@ -90,6 +107,7 @@ self.onmessage = (e) => {
       const g = new Uint8Array(m.buf);
       const t0 = performance.now();
       engine.pushFrame(g, m.w, m.h, m.t);
+      keepSnap(g, m.w, m.h, m.t);
       procMs = procMs * 0.9 + (performance.now() - t0 + (m.prepMs || 0)) * 0.1;
       frames++;
       self.postMessage({ type: 'buf', buf: m.buf }, [m.buf]);
@@ -104,6 +122,12 @@ self.onmessage = (e) => {
     }
     case 'reset': engine.reset(); status(true); break;
     case 'hold': engine.hold = !!m.on; break;
+    case 'snaps': {
+      const pick = snaps.filter((p) => p.t >= m.t0 && p.t <= m.t1);
+      snaps = snaps.filter((p) => !pick.includes(p));
+      self.postMessage({ type: 'snaps', id: m.id, frames: pick.map((p) => ({ t: p.t, w: p.w, h: p.h, buf: p.g.buffer })) }, pick.map((p) => p.g.buffer));
+      break;
+    }
     case 'debug': {
       const fr = engine.latest();
       let cands = [];

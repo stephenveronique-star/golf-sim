@@ -3,37 +3,26 @@
 // swing so swing.js can measure it. Body tracking only runs after the shot,
 // so it never slows down the ball tracking during the swing.
 
-const SNAP_W = 480;          // picture width kept for body tracking
-const SNAP_EVERY = 0.1;      // seconds between pictures
-const KEEP = 3.8;            // seconds of pictures kept
 
 export class SwingCapture {
   constructor(video, log) {
     this.video = video;
     this.log = log || (() => {});
-    this.snaps = [];          // {t, bmp}
-    this.lastSnap = 0;
-    this.canvas = document.createElement('canvas');
-    this.ctx = this.canvas.getContext('2d');
     this.pose = null;
     this.loading = null;
     this.busy = false;
   }
 
-  // call often (e.g. every animation frame); t in seconds on the performance clock
-  async tick(t) {
-    if (this.busy || t - this.lastSnap < SNAP_EVERY) return;
-    const v = this.video;
-    if (!v.videoWidth || v.videoHeight > v.videoWidth) return;
-    this.lastSnap = t;
-    const h = Math.round((v.videoHeight / v.videoWidth) * SNAP_W);
-    if (this.canvas.width !== SNAP_W || this.canvas.height !== h) { this.canvas.width = SNAP_W; this.canvas.height = h; }
-    this.ctx.drawImage(v, 0, 0, SNAP_W, h);
-    try {
-      const bmp = await createImageBitmap(this.canvas);
-      this.snaps.push({ t, bmp });
-    } catch { return; }
-    while (this.snaps.length && t - this.snaps[0].t > KEEP) { const o = this.snaps.shift(); try { o.bmp.close(); } catch { /* ignore */ } }
+  // Turn grey frames from the shot detector into small canvases
+  static toPics(frames) {
+    return frames.map((f) => {
+      const c = document.createElement('canvas'); c.width = f.w; c.height = f.h;
+      const ctx = c.getContext('2d'); const img = ctx.createImageData(f.w, f.h);
+      const g = new Uint8Array(f.buf);
+      for (let i = 0, j = 0; j < g.length; i += 4, j++) { const v = g[j]; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255; }
+      ctx.putImageData(img, 0, 0);
+      return { t: f.t, bmp: c };
+    });
   }
 
   // Load the body tracker the first time it's needed (about 15 MB, cached after)
@@ -64,6 +53,13 @@ export class SwingCapture {
 
   async landmarks(img) {
     const P = this.pose;
+    // copy into a work canvas first: body tracking may use up the picture it is given
+    if (!this.work) { this.work = document.createElement('canvas'); this.wctx = this.work.getContext('2d'); }
+    const iw = img.videoWidth || img.width, ih = img.videoHeight || img.height;
+    const W = Math.min(480, iw), H = Math.round((ih / iw) * W);
+    if (this.work.width !== W || this.work.height !== H) { this.work.width = W; this.work.height = H; }
+    this.wctx.drawImage(img, 0, 0, W, H);
+    img = this.work;
     return await new Promise((resolve) => {
       let done = false;
       P.onResults((r) => { if (!done) { done = true; resolve(r.poseLandmarks || null); } });
@@ -77,28 +73,27 @@ export class SwingCapture {
    * w, h: size of the ball tracker's frame, so landmarks share its pixels.
    * Returns {frames:[{t, lm}], pics:[{t,bmp}]} — pics are the pictures used.
    */
-  async analyse(tImp, w, h) {
+  async analyse(pics, w, h) {
     await this.load();
-    this.busy = true; // stop taking new pictures while we work
+    this.busy = true;
     try {
-      const pics = this.snaps.filter((p) => p.t >= tImp - 2.3 && p.t <= tImp + 1.05);
       this.pose.reset();
       // the first picture after a reset is often off: run it once to warm up
       if (pics.length) await this.landmarks(pics[0].bmp);
       const frames = [];
       const t0 = performance.now();
-      // If the phone is slow at this, look at every other picture instead
-      // (and never take more than ~6 seconds in total).
-      let step = 1, spent = 0, n = 0;
-      for (let i = 0; i < pics.length; i += step) {
-        const p = pics[i];
-        const ts = performance.now();
-        const lm = await this.landmarks(p.bmp);
-        spent += performance.now() - ts; n++;
-        frames.push({ t: p.t, lm: lm ? lm.map((q) => ({ x: q.x * w, y: q.y * h, v: q.visibility ?? 1 })) : null });
-        if (n === 4 && spent / n > 140) step = 2;
+      // Look at every other picture across the whole swing first, then fill
+      // in the gaps if there's time — a slow phone still covers address to finish.
+      const order = [];
+      for (let i = 0; i < pics.length; i += 2) order.push(i);
+      for (let i = 1; i < pics.length; i += 2) order.push(i);
+      for (const i of order) {
         if (performance.now() - t0 > 6000) break;
+        const p = pics[i];
+        const lm = await this.landmarks(p.bmp);
+        frames.push({ t: p.t, lm: lm ? lm.map((q) => ({ x: q.x * w, y: q.y * h, v: q.visibility ?? 1 })) : null });
       }
+      frames.sort((a, b) => a.t - b.t);
       this.log(`body tracking ran on ${pics.length} pictures in ${Math.round(performance.now() - t0)} ms · body found in ${frames.filter((f) => f.lm).length}`);
       return { frames, pics };
     } finally { this.busy = false; }
@@ -106,11 +101,10 @@ export class SwingCapture {
 
   // one quick look at the current picture (for the setup screen check)
   async check(w, h) {
-    if (!this.pose || this.busy || !this.snaps.length) return null;
+    if (!this.pose || this.busy || !this.video.videoWidth) return null;
     this.busy = true;
     try {
-      const p = this.snaps[this.snaps.length - 1];
-      const lm = await this.landmarks(p.bmp);
+      const lm = await this.landmarks(this.video);
       return lm ? lm.map((q) => ({ x: q.x * w, y: q.y * h, v: q.visibility ?? 1 })) : [];
     } finally { this.busy = false; }
   }
