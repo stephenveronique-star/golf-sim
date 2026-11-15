@@ -88,10 +88,16 @@ export function analyseSwing(frames, o) {
   const wA = mid(A[LM.lWr], A[LM.rWr]);
   // top of the backswing: hands furthest up and back (away from the target)
   const back = usable.filter((f) => T(f) > addr.t && T(f) < o.tImp - 0.12);
-  if (!back.length) return { ok: false, reason: 'backswing', seen: usable.length };
+  // hands out of the picture at the top? (ball too near the edge / phone too close)
+  const handsOut = () => {
+    if (!o.w) return false;
+    const m = o.w * 0.025;
+    return frames.some((f) => f.lm && T(f) > addr.t && T(f) < o.tImp - 0.1 && [LM.lWr, LM.rWr].some((i) => f.lm[i].x < m || f.lm[i].x > o.w - m || f.lm[i].y < m || f.lm[i].v < 0.2));
+  };
+  if (!back.length) return { ok: false, reason: handsOut() ? 'edge' : 'backswing', seen: usable.length };
   const score = (f) => (wA.y - wr(f).y) + 0.6 * s * (wA.x - wr(f).x);
   const top = back.reduce((b2, f) => (score(f) > score(b2) ? f : b2), back[0]);
-  if (score(top) < torso * 0.4) return { ok: false, reason: 'backswing', seen: usable.length };
+  if (score(top) < torso * 0.4) return { ok: false, reason: handsOut() ? 'edge' : 'backswing', seen: usable.length };
   const after = usable.filter((f) => T(f) > o.tImp + 0.3);
   const fin = after.length ? after[after.length - 1] : null;
 

@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.1';
+const VERSION = '1.8.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -342,6 +342,7 @@ function onEngineEvent(ev) {
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
+    checkFraming(ev.ball);
     setStatus('ready', 'Ready — hit away');
     $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
     updateReady();
@@ -358,6 +359,18 @@ function onEngineEvent(ev) {
     log(`SWING (behind view) ${ev.type}${ev.reason ? ' ' + ev.reason : ''} · moving bits per frame [${(ev.moving || []).join(',')}]`);
     const rec = swingOnlyRecord();
     if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); else toast('Turn Swing tips on in Settings to check your swing from behind', 4000);
+  } else if (ev.type === 'shot' && ev.launch.speed > clubById(S.club).ball * MPH * 1.3) {
+    // far faster than this club can hit: a false reading, not a shot
+    lastCapture = ev; eng.state = 'waiting'; updateReady();
+    setStatus('busy', 'Tee up next ball');
+    const L = ev.launch, lim = clubById(S.club).ball * MPH * 1.3;
+    log(`SHOT REJECTED ${L.speed.toFixed(1)} m/s is faster than a ${clubById(S.club).name} can hit (limit ${lim.toFixed(0)} m/s) · launch ${L.launch.toFixed(1)}° · seen in ${L.points} frames · ball ${ev.tee.d.toFixed(1)} px · moving bits per frame [${(ev.moving || []).join(',')}]`);
+    if ($('#setup').classList.contains('show')) closeSetup();
+    const miss = { id: Date.now(), ts: Date.now(), session, club: S.club, miss: true, swingOnly: true };
+    shots.push(miss); saveShots(); renderList();
+    toast(`That reading didn’t make sense for a ${clubById(S.club).name} (${(L.speed / MPH).toFixed(0)} mph), so it wasn’t counted.${ev.tee.d < 7 ? ' The ball is very small in the picture — move the phone closer (about 3 m).' : ''} Your swing is still checked.`, 7000);
+    beep(300, 0.25);
+    if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, miss);
   } else if (ev.type === 'shot') {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
@@ -368,7 +381,9 @@ function onEngineEvent(ev) {
   } else if (ev.type === 'moved') {
     eng.state = 'waiting'; updateReady();
     log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
-    toast('The phone moved, so that wasn’t counted as a shot. Finding the ball again — keep the tripod steady.', 5000);
+    movedTimes = movedTimes.filter((t) => performance.now() - t < 120000); movedTimes.push(performance.now());
+    if (movedTimes.length >= 3) { toast('The phone keeps moving — it looks hand-held. The app compares pictures to find the ball, so even a small wobble looks like movement. Put the phone on a stand, or prop it against something solid.', 9000); say('The phone keeps moving. Please put it on a stand.'); movedTimes = []; }
+    else toast('The phone moved, so that wasn’t counted as a shot. Finding the ball again — keep the phone still.', 5000);
   } else if (ev.type === 'nudged') {
     eng.ball = ev.ball;
     const now = performance.now();
@@ -724,6 +739,30 @@ function updateReady() {
   lastReadySt = st;
 }
 
+// The two set-up mistakes that spoil readings: the ball tiny in the picture
+// (phone too far away) and the ball near the edge (the swing goes out of view).
+let lastFramingWarn = 0, framingIssue = '';
+let movedTimes = [];
+function ballDistance(b) {
+  if (+S.ballDist > 0.5) return +S.ballDist;
+  const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
+  return (f * BALL.diameter) / b.d;
+}
+function checkFraming(b) {
+  if (!eng.w || !b) return;
+  const issues = [];
+  const dist = ballDistance(b), xf = b.x / eng.w;
+  if (b.d < 7) issues.push({ key: 'small', say: 'The ball is too small in the picture. Move the phone closer, about 3 metres from the ball.', text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about 3 m from the ball (ball should be 10 px or more).` });
+  if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
+  framingIssue = issues.map((i) => i.key).join(',');
+  if (!issues.length) return;
+  log(`SET-UP WARNING ${issues.map((i) => i.text).join(' · ')}`);
+  if (performance.now() - lastFramingWarn < 60000) return; // once a minute is enough
+  lastFramingWarn = performance.now();
+  toast(issues.map((i) => i.text).join('\n'), 9000);
+  setTimeout(() => say(issues[0].say), 1600);
+}
+
 function updateChips() {
   const fps = eng.fps || 0;
   const cf = $('#cFps');
@@ -877,6 +916,7 @@ const NOTES = {
   backswing: 'Couldn’t follow that swing clearly.',
   address: 'Couldn’t see your set-up clearly before the swing.',
   unclear: 'Couldn’t see your body clearly enough.',
+  edge: 'Your hands went out of the picture at the top of your swing — move the phone back a little, or so the ball is about a third of the way in from the edge.',
   load: 'Swing tips need internet the first time to download (about 20 MB).',
 };
 const POS = [['addr', 'Address'], ['take', 'Takeaway'], ['half', 'Halfway back'], ['top', 'Top'], ['down', 'Downswing'], ['imp', 'Impact'], ['thru', 'Follow-through'], ['fin', 'Finish']];
@@ -908,7 +948,7 @@ async function runSwingCheck2(ev, rec) {
     if (ev.launch && ev.launch.targetSign) lastTargetSign = ev.launch.targetSign;
     const target = (ev.launch && ev.launch.targetSign) || lastTargetSign;
     const sgn = S.hand === 'right' ? 1 : S.hand === 'left' ? -1 : (dtl ? 1 : target || 1);
-    const o = { tImp, ball: ev.tee, club: rec.club, s: sgn, heightCm: +S.heightCm || 0 };
+    const o = { tImp, ball: ev.tee, club: rec.club, s: sgn, heightCm: +S.heightCm || 0, w: ev.w, h: ev.h };
     res = dtl ? analyseSwingDTL(frames, o) : analyseSwing(frames, o);
   } catch (e) { res = { ok: false, reason: 'load', error: String(e.message || e) }; }
   finally { clearTimeout(unhold); worker.postMessage({ cmd: 'hold', on: false }); }
@@ -1401,7 +1441,8 @@ function reportText(d) {
     for (const s of ss) L.push(s.miss ? `  ${s.club} not read` : `  ${s.club}${s.demo ? ' (demo)' : ''} ${(s.speed).toFixed(1)} m/s ${s.launch.toFixed(1)}° dir ${s.dir.toFixed(1)}° → carry ${s.carry.toFixed(0)} m`);
   }
   if (lastSwing) L.push(lastSwing.ok ? `last swing: tips ${lastSwing.tips.map((t) => t.key).join(', ') || 'none'} · body seen in ${lastSwing.used} pictures · scale ${lastSwing.scaleFrom}` : `last swing: not analysed (${lastSwing.reason})`);
-  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand}`);
+  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? 'behind' : 'facing'}`);
+  if (eng.ball && eng.w) L.push(`ball ${eng.ball.d.toFixed(1)} px ≈ ${ballDistance(eng.ball).toFixed(1)} m away · ${Math.round((eng.ball.x / eng.w) * 100)}% across the picture${framingIssue ? ' · SET-UP PROBLEM: ' + framingIssue : ''}`);
   L.push('log (newest last):');
   for (const l of LOG.slice(-60)) L.push('  ' + l);
   return L.join('\n');
