@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Golf Sim">
-<meta name="theme-color" content="#0d1a12">
+<meta name="theme-color" content="#000307">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
@@ -253,13 +253,146 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
   .cell .val { font-size: 17px; }
   .bar { padding: 5px 8px; }
 }
+
+/* ================================================================ NEON GRID THEME */
+@font-face { font-family: 'Orbitron'; src: url(fonts/orbitron-latin-500-normal.woff2) format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Orbitron'; src: url(fonts/orbitron-latin-700-normal.woff2) format('woff2'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Orbitron'; src: url(fonts/orbitron-latin-900-normal.woff2) format('woff2'); font-weight: 900; font-display: swap; }
+@font-face { font-family: 'Rajdhani'; src: url(fonts/rajdhani-latin-500-normal.woff2) format('woff2'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Rajdhani'; src: url(fonts/rajdhani-latin-600-normal.woff2) format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Rajdhani'; src: url(fonts/rajdhani-latin-700-normal.woff2) format('woff2'); font-weight: 700; font-display: swap; }
+:root {
+  --bg: #000307; --panel: #030a11; --panel2: #061620; --line: rgba(63,230,255,0.22);
+  --text: #e8fbff; --muted: #7fa8b6; --accent: #3fe6ff; --accent2: #ff7a1a;
+  --warn: #ffb020; --bad: #ff3d5a;
+  --cyan: #3fe6ff; --orange: #ff7a1a; --edge: rgba(63,230,255,0.45);
+  --glow: 0 0 14px rgba(63,230,255,0.35);
+  --data: 'Orbitron', 'Rajdhani', system-ui, sans-serif;
+  /* HUD corner brackets on any panel: background: var(--hud), var(--panel) */
+  --hud: linear-gradient(var(--cyan), var(--cyan)) top left / 12px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) top left / 2px 12px no-repeat,
+         linear-gradient(var(--cyan), var(--cyan)) bottom right / 12px 2px no-repeat, linear-gradient(var(--cyan), var(--cyan)) bottom right / 2px 12px no-repeat;
+}
+html, body { font-family: 'Rajdhani', -apple-system, system-ui, sans-serif; font-weight: 500; font-size: 16px; }
+b, strong, h1, h2, h3 { font-weight: 700; }
+.bar { background: #000; border-bottom: 1px solid var(--edge); box-shadow: 0 1px 14px rgba(63,230,255,0.18); }
+.brand { font-family: var(--data); font-weight: 700; letter-spacing: 0.12em; color: var(--cyan); text-shadow: 0 0 10px rgba(63,230,255,0.7); }
+.brand span { color: var(--cyan); }
+.sections { background: transparent; border: 1px solid var(--edge); border-radius: 3px; padding: 2px; gap: 0; }
+.sections button { border-radius: 2px; font-size: 15px; font-weight: 600; color: #8fc9d8; padding: 4px 12px; letter-spacing: 0.03em; }
+.sections button.on { background: rgba(63,230,255,0.14); color: #fff; box-shadow: inset 0 -2px 0 var(--cyan), 0 0 12px rgba(63,230,255,0.35); text-shadow: 0 0 8px rgba(63,230,255,0.9); }
+.pill { background: transparent; border: 1px solid var(--edge); border-radius: 3px; font-family: var(--data); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.pill.ready { border-color: var(--cyan); box-shadow: var(--glow); }
+.pill.ready i { background: #39ff9c; box-shadow: 0 0 8px #39ff9c; }
+.pill.busy { border-color: rgba(255,122,26,0.7); } .pill.busy i { background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+.btn { border-radius: 3px; background: transparent; border: 1px solid var(--edge); color: var(--text); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 14px; }
+.btn.primary { background: var(--cyan); border-color: var(--cyan); color: #00121a; box-shadow: 0 0 18px rgba(63,230,255,0.55); }
+.btn.ghost { border-color: rgba(63,230,255,0.25); }
+.icon-btn { border-radius: 3px; background: transparent; border: 1px solid var(--edge); color: var(--cyan); }
+.side { background: #000; border-left: 1px solid var(--edge); }
+.big { border-bottom: 0; }
+.big .lbl, .cell .lbl, .ready-light span, .row.head, .page h3, .sheet h3 { font-family: var(--data); font-weight: 500; letter-spacing: 0.12em; }
+.big .lbl { color: var(--cyan); font-size: 11px; }
+.big .val { font-family: var(--data); font-weight: 900; color: var(--cyan); text-shadow: 0 0 18px rgba(63,230,255,0.6); letter-spacing: 0; }
+.big .val small { font-family: var(--data); color: var(--cyan); opacity: 0.8; }
+.grid { background: transparent; gap: 6px; padding: 0 8px 8px; border-bottom: 0; }
+.cell { background: var(--hud), var(--panel); border: 1px solid var(--line); border-radius: 2px; box-shadow: inset 0 0 14px rgba(63,230,255,0.06); }
+.cell .lbl { font-size: 9px; color: #8fc9d8; }
+.cell .val { font-family: var(--data); font-weight: 700; color: #fff; font-size: 18px; }
+.cell .val em { font-family: 'Rajdhani', sans-serif; color: var(--muted); }
+.est { border-color: rgba(255,122,26,0.5); color: var(--orange); border-radius: 2px; font-family: 'Rajdhani', sans-serif; }
+.tips { border: 1px solid var(--line); border-left: 3px solid var(--orange); margin: 0 8px 8px; border-radius: 2px; background: var(--panel); }
+.tips .h { color: var(--orange); font-family: var(--data); font-weight: 500; letter-spacing: 0.12em; font-size: 10px; }
+.tips .h button { color: var(--cyan); font-family: 'Rajdhani', sans-serif; font-size: 14px; }
+.tips .scoreline b { font-family: var(--data); }
+.tips .ok { color: var(--cyan); }
+.tabs button { font-weight: 700; letter-spacing: 0.04em; }
+.tabs button.on { border-color: var(--cyan); color: #fff; text-shadow: 0 0 8px rgba(63,230,255,0.8); }
+.row { border-bottom: 1px solid rgba(63,230,255,0.08); font-size: 15px; font-weight: 600; }
+.row.head { font-size: 9px; color: #8fc9d8; }
+.actions { border-top: 1px solid var(--line); }
+.view-toggle { background: rgba(0,0,0,0.6); border: 1px solid var(--edge); border-radius: 3px; }
+.view-toggle button { color: #8fc9d8; border-radius: 2px; font-weight: 600; }
+.view-toggle button.on { background: rgba(63,230,255,0.16); color: #fff; box-shadow: inset 0 -2px 0 var(--cyan); }
+.pip { border: 1.5px solid var(--cyan); border-radius: 4px; box-shadow: 0 0 18px rgba(63,230,255,0.45); }
+.pip .tag { font-family: var(--data); font-size: 9px; letter-spacing: 0.1em; }
+.ready-light { background: rgba(0,0,0,0.7); border: 1px solid var(--edge); border-radius: 4px; }
+.ready-light b { font-family: var(--data); font-weight: 900; letter-spacing: 0.08em; }
+body[data-ready=ready] .ready-light { background: rgba(0,18,26,0.85); border-color: var(--cyan); box-shadow: 0 0 28px rgba(63,230,255,0.6); }
+body[data-ready=ready] .ready-light b { color: var(--cyan); text-shadow: 0 0 16px rgba(63,230,255,0.9); }
+body[data-ready=tee] .ready-light { background: rgba(26,10,0,0.85); border-color: var(--orange); box-shadow: 0 0 24px rgba(255,122,26,0.55); }
+body[data-ready=tee] .ready-light b { color: var(--orange); text-shadow: 0 0 14px rgba(255,122,26,0.9); }
+body[data-ready=ready] .app { box-shadow: inset 0 0 0 3px var(--cyan), inset 0 0 30px rgba(63,230,255,0.45); }
+body[data-ready=tee] .app { box-shadow: inset 0 0 0 3px var(--orange), inset 0 0 26px rgba(255,122,26,0.35); }
+body[data-ready=ready] .setup::after { box-shadow: inset 0 0 0 6px var(--cyan), inset 0 0 40px rgba(63,230,255,0.5); }
+body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 6px var(--orange), inset 0 0 36px rgba(255,122,26,0.4); }
+.chip { border: 1px solid var(--line); border-radius: 3px; background: rgba(0,0,0,0.75); }
+.setup .msg { border: 1px solid var(--edge); border-radius: 4px; background: rgba(0,0,0,0.8); box-shadow: var(--glow); }
+/* sheets and pages */
+.overlay { background: rgba(0,3,7,0.86); }
+.sheet { background: var(--hud), #01070c; border: 1px solid var(--edge); border-radius: 3px; box-shadow: 0 0 30px rgba(63,230,255,0.2); }
+.sheet h2 { font-family: var(--data); font-weight: 700; letter-spacing: 0.06em; font-size: 18px; color: #fff; }
+.sheet h3 { font-size: 11px; color: var(--cyan); }
+.sheet p, .sheet li { color: #c6e6ef; font-size: 15px; }
+.field input, .field select { border-radius: 3px; border-color: var(--edge); background: #000; }
+.seg { border: 1px solid var(--line); border-radius: 3px; background: transparent; }
+.seg button { border-radius: 2px; font-weight: 600; }
+.seg button.on { background: var(--cyan); color: #00121a; box-shadow: 0 0 10px rgba(63,230,255,0.5); }
+.clubs button { border-radius: 3px; background: transparent; border: 1px solid var(--line); font-family: var(--data); font-size: 15px; }
+.page { background: #000307 linear-gradient(rgba(63,230,255,0.035) 1px, transparent 1px) 0 0 / 100% 32px; }
+.page h3 { font-size: 11px; color: var(--cyan); text-shadow: 0 0 8px rgba(63,230,255,0.5); }
+.page .stats > div, .page .sess, .page .summary, .swings .summary { background: var(--hud), var(--panel); border: 1px solid var(--line); border-radius: 2px; }
+.page .stats b { font-family: var(--data); font-weight: 700; font-size: 24px; color: #fff; }
+.page .work { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--orange); border-radius: 2px; }
+.page .work .num { background: var(--orange); color: #1a0800; border-radius: 2px; font-family: var(--data); }
+.page .work .drill, #swTips2 .drill { border-top: 1px dashed rgba(63,230,255,0.3); color: #bfeffa; }
+.page .later { border-radius: 2px; border-color: var(--line); background: transparent; }
+#swTips .tip, #swTips2 .tip { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--orange); border-radius: 2px; }
+.swings canvas { border-radius: 3px; border: 1px solid var(--line); }
+.swings .btn.tog.on { background: rgba(63,230,255,0.14); border-color: var(--cyan); color: #fff; }
+/* start: glowing grid floor and light trail */
+.start { background: #000; overflow: hidden; }
+.start::before { content: ''; position: absolute; left: -60%; right: -60%; bottom: -8%; height: 62%;
+  background-image: linear-gradient(rgba(63,230,255,0.55) 1px, transparent 1px), linear-gradient(90deg, rgba(63,230,255,0.55) 1px, transparent 1px);
+  background-size: 56px 56px; transform: perspective(260px) rotateX(62deg); transform-origin: 50% 100%;
+  -webkit-mask-image: linear-gradient(to top, #000 25%, transparent 95%); mask-image: linear-gradient(to top, #000 25%, transparent 95%); }
+.start::after { content: ''; position: absolute; left: 0; right: 0; top: 46%; height: 2px; background: var(--cyan); box-shadow: 0 0 22px 4px rgba(63,230,255,0.7); opacity: 0.85; }
+.start .trail { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.start .card { position: relative; z-index: 1; background: rgba(0,6,10,0.72); border: 1px solid var(--edge); border-radius: 4px; padding: 22px 26px; box-shadow: 0 0 40px rgba(63,230,255,0.18); background-image: var(--hud); }
+.start h1 { font-family: var(--data); font-weight: 900; letter-spacing: 0.14em; color: var(--cyan); text-shadow: 0 0 22px rgba(63,230,255,0.8); font-size: 32px; }
+.start h1 span { color: var(--cyan); }
+.start p { color: #bfe9f5; font-size: 17px; }
+.start .note { color: var(--muted); }
+
+.start h1 { text-transform: uppercase; }
+.view-toggle { top: 10px; bottom: auto; }
+.cell { padding: 5px 9px; }
+.cell .lbl { white-space: nowrap; }
+.est { font-size: 9px; padding: 0 2px; margin-left: 3px; }
+@media (max-height: 430px) and (orientation: landscape) {
+  .big { padding: 6px 12px 2px; }
+  .big .val { font-size: 40px; }
+  .grid { gap: 4px; padding: 0 6px 6px; }
+  .cell { padding: 3px 8px 4px; }
+  .cell .lbl { font-size: 8px; letter-spacing: 0.08em; }
+  .cell .val { font-size: 15px; }
+  .tips { margin: 0 6px 6px; }
+}
+
+@media (max-width: 920px) {
+  .brand { font-size: 14px; letter-spacing: 0.08em; }
+  .bar { gap: 6px; }
+  .bar .btn { padding: 7px 9px; letter-spacing: 0.04em; font-size: 13px; }
+  .bar .icon-btn { width: 34px; height: 34px; }
+  .pill { letter-spacing: 0.04em; padding: 5px 8px; }
+  .sections button { padding: 4px 9px; }
+}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="bar">
     <div class="brand">GOLF<span>SIM</span> <small id="brandVer" style="font-size:11px;color:var(--muted);font-weight:600"></small></div>
-    <div class="sections" id="sections"><button data-sec="drive" class="on">⛳ <span class="my">My </span>Drive</button><button data-sec="info">📊 <span class="my">My </span>Info</button><button data-sec="game">🎯 <span class="my">My </span>Game</button></div>
+    <div class="sections" id="sections"><button data-sec="drive" class="on"><span class="my">My </span>Drive</button><button data-sec="info"><span class="my">My </span>Info</button><button data-sec="game"><span class="my">My </span>Game</button></div>
     <div class="pill off" id="status" title=""><i></i><span>Camera off</span></div>
     <div class="spacer"></div>
     <button class="btn club-btn drive-only" id="clubBtn">7 Iron</button>
@@ -304,13 +437,14 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
 
 <!-- start -->
 <div class="start" id="start">
+  <svg class="trail" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true"><defs><filter id="glw"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M120 470 C 300 40, 700 20, 900 300" fill="none" stroke="#3fe6ff" stroke-width="3" filter="url(#glw)" opacity="0.8"/><circle cx="900" cy="300" r="5" fill="#fff" filter="url(#glw)"/><ellipse cx="900" cy="303" rx="34" ry="8" fill="none" stroke="#ff7a1a" stroke-width="2" filter="url(#glw)"/></svg>
   <div class="card">
     <h1>Golf<span>Sim</span></h1>
     <p>Put your iPhone on a tripod beside the ball, hit into your net, and see how far it went and where it went.</p>
     <div class="btns">
       <button class="btn primary" id="startCam">Start camera</button>
       <button class="btn" id="startGuide">How to set up</button>
-      <div class="row2"><button class="btn" id="startInfo">📊 My Info</button><button class="btn" id="startGame">🎯 My Game</button></div>
+      <div class="row2"><button class="btn" id="startInfo">My Info</button><button class="btn" id="startGame">My Game</button></div>
     </div>
     <div class="note" id="startNote">Works best in Safari on iPhone, in landscape, outdoors in daylight.</div>
   </div>

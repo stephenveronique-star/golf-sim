@@ -2,12 +2,14 @@
 // World: x downrange (m), y up, z right of target line.
 
 const YD = 0.9144;
+// Neon grid look: black world, glowing cyan grid and light-trail ball flight
 const COLORS = {
-  skyTop: '#7fb2d9', skyBot: '#d7e8f2',
-  rough: '#3f7a35', fairway: '#58a046', fairwayDark: '#4f9640',
-  line: 'rgba(255,255,255,0.55)', text: '#ffffff',
-  tracer: '#ffd34d', ball: '#ffffff', old: 'rgba(255,255,255,0.75)',
+  skyTop: '#000000', skyBot: '#02121b',
+  rough: '#000307', fairway: 'rgba(63,230,255,0.05)', fairwayDark: 'rgba(63,230,255,0.02)',
+  line: 'rgba(63,230,255,0.75)', text: '#bff6ff', grid: 'rgba(63,230,255,',
+  tracer: '#3fe6ff', ball: '#ffffff', old: 'rgba(63,230,255,0.55)', land: '#ff7a1a',
 };
+const FONT = "'Orbitron', 'Rajdhani', system-ui, sans-serif";
 
 export class RangeView {
   constructor(canvas) {
@@ -87,10 +89,10 @@ export class RangeView {
       const p = this.P(s.end.x, 0, s.end.z);
       const q = this.P(s.land.x, 0, s.land.z);
       if (!p || !q) continue;
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(63,230,255,0.3)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-      ctx.fillStyle = s.color || COLORS.old;
-      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(2.5, Math.min(6, (this.mode === 'top' ? 4 : p.s * 0.6))), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = s.color || COLORS.old; ctx.shadowColor = 'rgba(63,230,255,0.8)'; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(2.5, Math.min(6, (this.mode === 'top' ? 4 : p.s * 0.6))), 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
     }
     // current tracer
     const cur = this.current;
@@ -102,14 +104,12 @@ export class RangeView {
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       // shadow on the ground
       if (this.mode === 'dtl') {
-        ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(63,230,255,0.25)'; ctx.lineWidth = 1.5;
         ctx.beginPath();
         let started = false;
         for (const p of pts) { if (p.t > el) break; const q = this.P(p.x, 0, p.z); if (!q) continue; if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y); }
         ctx.stroke();
       }
-      ctx.strokeStyle = cur.color || COLORS.tracer; ctx.lineWidth = 3;
-      ctx.shadowColor = 'rgba(255,200,40,0.8)'; ctx.shadowBlur = 8;
       ctx.beginPath();
       let last = null, started = false;
       for (const p of pts) {
@@ -118,11 +118,14 @@ export class RangeView {
         if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
         last = { p, q };
       }
-      ctx.stroke(); ctx.shadowBlur = 0;
+      // light trail: soft wide glow, then a bright core
+      ctx.strokeStyle = 'rgba(63,230,255,0.28)'; ctx.lineWidth = 9; ctx.shadowColor = 'rgba(63,230,255,0.9)'; ctx.shadowBlur = 18; ctx.stroke();
+      ctx.strokeStyle = cur.color || COLORS.tracer; ctx.lineWidth = 3; ctx.shadowBlur = 10; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1; ctx.shadowBlur = 0; ctx.stroke();
       if (el < tEnd) animating = true;
       if (last) {
-        ctx.fillStyle = COLORS.ball;
-        ctx.beginPath(); ctx.arc(last.q.x, last.q.y, Math.max(3, Math.min(7, this.mode === 'top' ? 4 : last.q.s * 0.25)), 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = COLORS.ball; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(last.q.x, last.q.y, Math.max(3, Math.min(7, this.mode === 'top' ? 4 : last.q.s * 0.25)), 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
       }
       // roll after landing
       if (el >= tEnd) {
@@ -132,10 +135,14 @@ export class RangeView {
         const bz = cur.sim.land.z + (cur.sim.end.z - cur.sim.land.z) * rollT;
         const b = this.P(bx, 0, bz);
         if (a && b) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2;
+          // landing rings
+          const rs = this.mode === 'top' ? 1 : Math.max(0.35, Math.min(1.2, a.s * 0.08));
+          ctx.strokeStyle = COLORS.land; ctx.shadowColor = COLORS.land; ctx.shadowBlur = 10; ctx.lineWidth = 1.5;
+          for (const r of [10, 18]) { ctx.beginPath(); ctx.ellipse(a.x, a.y, r * rs * 1.6, r * rs * (this.mode === 'top' ? 1.6 : 0.45), 0, 0, Math.PI * 2); ctx.stroke(); }
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = 'rgba(63,230,255,0.8)'; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-          ctx.fillStyle = COLORS.ball; ctx.beginPath(); ctx.arc(b.x, b.y, 4.5, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.fillStyle = COLORS.ball; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(b.x, b.y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
         }
         if (rollT < 1) animating = true;
         else if (!cur.labelled) cur.labelled = true;
@@ -151,77 +158,86 @@ export class RangeView {
   label(p, text) {
     if (!text) return;
     const { ctx } = this;
-    ctx.font = '600 14px -apple-system, system-ui, sans-serif';
-    const w = ctx.measureText(text).width + 14;
-    const x = Math.min(this.W - w - 4, Math.max(4, p.x - w / 2)), y = p.y - 34;
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    roundRect(ctx, x, y, w, 24, 8); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(text, x + 7, y + 12.5);
+    ctx.font = `700 13px ${FONT}`;
+    const w = ctx.measureText(text).width + 16;
+    const x = Math.min(this.W - w - 4, Math.max(4, p.x - w / 2)), y = p.y - 36;
+    ctx.fillStyle = 'rgba(0,10,16,0.85)'; roundRect(ctx, x, y, w, 24, 3); ctx.fill();
+    ctx.strokeStyle = '#3fe6ff'; ctx.lineWidth = 1; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#e8fbff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(text, x + 8, y + 12.5);
   }
 
   drawGround() {
     const { ctx, W, H } = this;
     const hz = this.proj(5000, 0, 0).y;
-    const g = ctx.createLinearGradient(0, 0, 0, hz);
-    g.addColorStop(0, COLORS.skyTop); g.addColorStop(1, COLORS.skyBot);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, hz + 1);
-    // distant trees
-    ctx.fillStyle = '#2f5d2c';
-    ctx.beginPath(); ctx.moveTo(0, hz);
-    for (let x = 0; x <= W; x += 12) ctx.lineTo(x, hz - 6 - 5 * Math.abs(Math.sin(x * 0.07)) - 3 * Math.sin(x * 0.23));
-    ctx.lineTo(W, hz); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = COLORS.rough; ctx.fillRect(0, hz, W, H - hz);
-    const R = 450;
-    // mown stripes on the fairway
-    const fw = 22;
-    const step = this.unit === 'yd' ? 9.144 : 10;
-    for (let x = 0; x < R; x += step) {
-      const a = this.proj(x, 0, -fw), b = this.proj(x, 0, fw), c = this.proj(x + step, 0, fw), d = this.proj(x + step, 0, -fw);
-      if (!a || !b || !c || !d) continue;
-      ctx.fillStyle = (Math.round(x / step) % 2) ? COLORS.fairway : COLORS.fairwayDark;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.closePath(); ctx.fill();
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, COLORS.skyTop); g.addColorStop(Math.max(0, Math.min(1, hz / H)), COLORS.skyBot); g.addColorStop(1, '#000306');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // glow above the horizon
+    const hg = ctx.createLinearGradient(0, hz - 40, 0, hz);
+    hg.addColorStop(0, 'rgba(63,230,255,0)'); hg.addColorStop(1, 'rgba(63,230,255,0.18)');
+    ctx.fillStyle = hg; ctx.fillRect(0, hz - 40, W, 40);
+    const R = 450, step = this.unit === 'yd' ? 9.144 : 10;
+    // grid lines running downrange
+    ctx.lineWidth = 1;
+    for (let z = -120; z <= 120; z += 10) {
+      const a = this.proj(0, 0, z), b = this.proj(R, 0, z); if (!a || !b) continue;
+      const lg = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+      const k = z === 0 ? 0.0 : (Math.abs(z) <= 20 ? 0.5 : 0.32);
+      lg.addColorStop(0, COLORS.grid + k + ')'); lg.addColorStop(1, COLORS.grid + '0.04)');
+      ctx.strokeStyle = lg; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     }
-    // tee box
+    // grid lines across
+    for (let x = step; x < R; x += step) {
+      const a = this.proj(x, 0, -120), b = this.proj(x, 0, 120); if (!a || !b) continue;
+      const fade = Math.max(0.04, 0.4 * (1 - x / R));
+      ctx.strokeStyle = COLORS.grid + fade + ')'; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    // horizon line
+    ctx.strokeStyle = '#3fe6ff'; ctx.lineWidth = 1.5; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.moveTo(0, hz); ctx.lineTo(W, hz); ctx.stroke(); ctx.shadowBlur = 0;
+    // tee pad
     const t1 = this.proj(-2, 0, -2.5), t2 = this.proj(-2, 0, 2.5), t3 = this.proj(3, 0, 2.5), t4 = this.proj(3, 0, -2.5);
-    if (t1 && t2 && t3 && t4) { ctx.fillStyle = '#6cb556'; ctx.beginPath(); ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y); ctx.closePath(); ctx.fill(); }
+    if (t1 && t2 && t3 && t4) { ctx.fillStyle = 'rgba(63,230,255,0.12)'; ctx.strokeStyle = 'rgba(63,230,255,0.8)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.lineTo(t3.x, t3.y); ctx.lineTo(t4.x, t4.y); ctx.closePath(); ctx.fill(); ctx.stroke(); }
     this.drawMarkers(false);
   }
 
   drawTopGround() {
     const { ctx, W, H } = this;
-    ctx.fillStyle = COLORS.rough; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#000307'; ctx.fillRect(0, 0, W, H);
     const R = this.maxRange();
+    ctx.lineWidth = 1;
+    const o = this.projTop(0, 0, 0), sc = o.s, cell = 10 * sc;
+    for (let x = o.x % cell; x < W; x += cell) { ctx.strokeStyle = 'rgba(63,230,255,0.10)'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for (let y = o.y; y > 0; y -= cell) { ctx.strokeStyle = 'rgba(63,230,255,0.10)'; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
     const a = this.projTop(0, 0, -22), b = this.projTop(R * 1.2, 0, 22);
-    ctx.fillStyle = COLORS.fairway; ctx.fillRect(a.x, b.y, b.x - a.x, a.y - b.y);
+    ctx.fillStyle = 'rgba(63,230,255,0.05)'; ctx.fillRect(a.x, b.y, b.x - a.x, a.y - b.y);
     this.drawMarkers(true);
   }
 
   drawSideGround() {
     const { ctx, W, H } = this;
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, COLORS.skyTop); g.addColorStop(1, COLORS.skyBot);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#000307'; ctx.fillRect(0, 0, W, H);
     const base = this.projSide(0, 0).y;
-    ctx.fillStyle = COLORS.fairway; ctx.fillRect(0, base, W, H - base);
+    ctx.strokeStyle = '#3fe6ff'; ctx.lineWidth = 1.5; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.moveTo(0, base); ctx.lineTo(W, base); ctx.stroke(); ctx.shadowBlur = 0;
     const yd = this.unit === 'yd', k = yd ? YD : 1;
     const R = this.maxRange();
     const every = R < 160 ? 25 : 50;
-    ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+    ctx.font = `500 10px ${FONT}`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let d = every; d * k <= R; d += every) {
       const p = this.projSide(d * k, 0);
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(63,230,255,0.18)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(p.x, base); ctx.lineTo(p.x, 50); ctx.stroke();
       ctx.fillStyle = COLORS.text; ctx.fillText(`${d}${yd ? 'y' : 'm'}`, p.x, base + 6);
     }
-    // height guides
-    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillStyle = 'rgba(127,168,182,0.8)';
     const hEvery = this.maxApex() > 45 ? 20 : 10;
     for (let h = hEvery; ; h += hEvery) {
       const p = this.projSide(0, h * k);
       if (p.y < 55) break;
-      ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+      ctx.strokeStyle = 'rgba(63,230,255,0.08)';
       ctx.beginPath(); ctx.moveTo(0, p.y); ctx.lineTo(W, p.y); ctx.stroke();
       ctx.fillText(`${h}${yd ? 'y' : 'm'} high`, 6, p.y - 1);
     }
@@ -239,28 +255,19 @@ export class RangeView {
       const x = d * k;
       const a = this.P(x, 0, -40), b = this.P(x, 0, 40);
       if (!a || !b) continue;
-      ctx.strokeStyle = COLORS.line; ctx.lineWidth = top ? 1 : Math.max(0.5, a.s * 0.04);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      const fp = this.P(x, 0, 0);
-      if (!top) {
-        // flag
-        const tp = this.P(x, 2.4, 0);
-        ctx.strokeStyle = '#eee'; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.lineTo(tp.x, tp.y); ctx.stroke();
-        ctx.fillStyle = d % 100 === 0 ? '#e2412f' : '#f2c230';
-        const fl = Math.max(4, tp.s * 0.9);
-        ctx.beginPath(); ctx.moveTo(tp.x, tp.y); ctx.lineTo(tp.x + fl, tp.y + fl * 0.3); ctx.lineTo(tp.x, tp.y + fl * 0.6); ctx.closePath(); ctx.fill();
-      }
+      ctx.strokeStyle = d % 100 === 0 ? COLORS.line : 'rgba(63,230,255,0.5)'; ctx.lineWidth = top ? 1 : Math.max(0.8, a.s * 0.05);
+      ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.shadowBlur = 0;
       const lp = top ? this.P(x, 0, -20) : this.P(x, 0, -24);
       if (!top) { if (this._lastLblY != null && this._lastLblY - lp.y < 13) continue; this._lastLblY = lp.y; }
       ctx.fillStyle = COLORS.text;
-      ctx.font = `600 ${top ? 11 : Math.max(9, Math.min(14, lp.s * 0.9))}px -apple-system, system-ui, sans-serif`;
+      ctx.font = `500 ${top ? 10 : Math.max(8, Math.min(12, lp.s * 0.8))}px ${FONT}`;
       ctx.fillText(`${d}${yd ? 'y' : 'm'}`, lp.x, lp.y - 2);
     }
     // target line
     const s = this.P(0, 0, 0), e = this.P(R, 0, 0);
     if (s && e) {
-      ctx.setLineDash([4, 6]); ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 6]); ctx.strokeStyle = 'rgba(255,122,26,0.55)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); ctx.stroke(); ctx.setLineDash([]);
     }
   }

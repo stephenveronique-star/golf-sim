@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -625,7 +625,7 @@ function drawPip() {
   ctx.clearRect(0, 0, pipC.width, pipC.height); // the live video shows underneath
   if (eng.ball && eng.w) {
     const k = pipC.width / eng.w;
-    ctx.strokeStyle = eng.state === 'armed' ? '#7ee36b' : '#ffd34d'; ctx.lineWidth = 2;
+    ctx.strokeStyle = eng.state === 'armed' ? '#3fe6ff' : '#ffd34d'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(eng.ball.x * k, eng.ball.y * k, Math.max(5, eng.ball.d * k), 0, Math.PI * 2); ctx.stroke();
   }
   $('#pipTag').textContent = eng.state === 'armed' ? 'Ready' : eng.state === 'waiting' ? 'Tee up' : 'Tap to set up';
@@ -652,9 +652,9 @@ function drawSetup() {
   if (eng.ball && eng.w) {
     const k = fit.w / eng.w;
     const bx = fit.x + eng.ball.x * k, by = fit.y + eng.ball.y * k;
-    ctx.strokeStyle = eng.state === 'armed' ? '#7ee36b' : '#ffd34d'; ctx.lineWidth = 3 * dpr;
+    ctx.strokeStyle = eng.state === 'armed' ? '#3fe6ff' : '#ffd34d'; ctx.lineWidth = 3 * dpr;
     ctx.beginPath(); ctx.arc(bx, by, Math.max(10 * dpr, eng.ball.d * k * 1.2), 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(126,227,107,0.5)'; ctx.lineWidth = 1 * dpr;
+    ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(63,230,255,0.5)'; ctx.lineWidth = 1 * dpr;
     ctx.beginPath(); ctx.moveTo(fit.x, by); ctx.lineTo(fit.x + fit.w, by); ctx.stroke(); ctx.setLineDash([]);
   }
   if (S.debug === 'on' && dbg && eng.w) {
@@ -668,7 +668,7 @@ function drawSetup() {
   }
   if (S.teeSpot && eng.w && video.videoWidth >= video.videoHeight) {
     const k = fit.w / eng.w;
-    ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(126,227,107,0.6)'; ctx.lineWidth = 2 * dpr;
+    ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(63,230,255,0.6)'; ctx.lineWidth = 2 * dpr;
     ctx.beginPath(); ctx.arc(fit.x + S.teeSpot.x * fit.w, fit.y + S.teeSpot.y * fit.h, eng.w * 0.08 * k, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
   }
   if (tapMark && eng.w) {
@@ -677,7 +677,7 @@ function drawSetup() {
     else {
       const k = fit.w / eng.w;
       ctx.globalAlpha = 1 - age / 1500;
-      ctx.strokeStyle = tapMark.ok ? '#7ee36b' : '#ff6b5b'; ctx.lineWidth = 2 * dpr;
+      ctx.strokeStyle = tapMark.ok ? '#3fe6ff' : '#ff6b5b'; ctx.lineWidth = 2 * dpr;
       ctx.beginPath(); ctx.arc(fit.x + tapMark.x * k, fit.y + tapMark.y * k, 26 * dpr, 0, Math.PI * 2); ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -810,7 +810,7 @@ function drawReplay() {
   ctx.putImageData(img, 0, 0);
   const lw = Math.max(1.5, ev.w / 400);
   ctx.lineWidth = lw;
-  ctx.strokeStyle = '#7ee36b';
+  ctx.strokeStyle = '#3fe6ff';
   ctx.beginPath(); ctx.arc(ev.tee.x, ev.tee.y, ev.tee.d * 1.3, 0, Math.PI * 2); ctx.stroke();
   if (ev.track) {
     const pts = ev.track.pts;
@@ -1084,13 +1084,13 @@ function drawSeries(c, pts, band, unit = '', dp = 0) {
   const pad = (band[1] - band[0]) * 0.25 || 2;
   const lo = Math.min(band[0], ...pts) - pad, hi = Math.max(band[1], ...pts) + pad;
   const Y = (v) => H - 14 - ((v - lo) / (hi - lo || 1)) * (H - 24), X = (i) => 30 + (i / Math.max(1, pts.length - 1)) * (W - 44);
-  ctx.fillStyle = 'rgba(126,227,107,0.18)'; ctx.fillRect(30, Y(band[1]), W - 44, Y(band[0]) - Y(band[1]));
+  ctx.fillStyle = 'rgba(63,230,255,0.18)'; ctx.fillRect(30, Y(band[1]), W - 44, Y(band[0]) - Y(band[1]));
   ctx.fillStyle = '#9db8a6'; ctx.font = '11px system-ui';
   ctx.fillText(String(band[1]), 2, Y(band[1]) + 4); ctx.fillText(String(band[0]), 2, Y(band[0]) + 4);
   if (!pts.length) return;
   ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2; ctx.beginPath();
   pts.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)))); ctx.stroke();
-  pts.forEach((v, i) => { const ok = v >= band[0] && v <= band[1]; ctx.fillStyle = ok ? '#7ee36b' : '#ff7a8a'; ctx.beginPath(); ctx.arc(X(i), Y(v), 3.5, 0, Math.PI * 2); ctx.fill(); });
+  pts.forEach((v, i) => { const ok = v >= band[0] && v <= band[1]; ctx.fillStyle = ok ? '#3fe6ff' : '#ff7a1a'; ctx.beginPath(); ctx.arc(X(i), Y(v), 3.5, 0, Math.PI * 2); ctx.fill(); });
   const lastV = pts[pts.length - 1];
   ctx.fillStyle = '#fff'; ctx.font = '600 12px system-ui'; ctx.fillText(lastV.toFixed(dp) + unit, Math.min(W - 50, X(pts.length - 1) - 10), Y(lastV) - 8);
 }
@@ -1130,7 +1130,7 @@ function updatePlayerText() {
   const r = P.rec;
   $('#swTitle').innerHTML = `${fmtWhen(r.ts)}${r.speed != null ? ` · ball speed ${(r.speed / MPH).toFixed(0)} mph · launch ${r.launch.toFixed(0)}°` : ''}${r.view === 'dtl' ? ' · filmed from behind' : ''}` +
     (r.ok ? ` · <b style="color:${scoreColour(r.score)}">Score ${r.score.toFixed(1)}/10</b>${r.metrics.tempo ? ` · tempo ${r.metrics.tempo.toFixed(1)}:1` : ''}` : ` · swing not checked: ${NOTES[r.reason] || 'body not seen'}`) +
-    (P.cmp ? `<br><span style="color:#6fc3ff">Right: ${swingTitle(P.cmp)} · ${fmtWhen(P.cmp.ts)}${P.cmp.ok ? ` · score ${P.cmp.score.toFixed(1)}` : ''}</span>` : '');
+    (P.cmp ? `<br><span style="color:#ff7a1a">Right: ${swingTitle(P.cmp)} · ${fmtWhen(P.cmp.ts)}${P.cmp.ok ? ` · score ${P.cmp.score.toFixed(1)}` : ''}</span>` : '');
   $('#swTips2').innerHTML = r.ok ? ((r.tips.length ? r.tips.map((t) => `<div class="tip">${t.text}${t.drill ? `<div class="drill">🏌️ ${t.drill}</div>` : ''}</div>`).join('') : '<div class="tip good">No clear faults on this swing.</div>') + (r.good || []).map((g) => `<div class="tip good">✓ ${g}</div>`).join('')) : '';
   $('#swMetrics2').textContent = metricsText(r);
 }
@@ -1179,18 +1179,18 @@ function drawSwingPanel(ctx, rec, bmps, t, x0, opts = {}) {
   if (rec.addrLm && rec.view !== 'dtl') {
     const A = rec.addrLm; ctx.setLineDash([5, 5]); ctx.lineWidth = 1.5;
     ctx.strokeStyle = 'rgba(255,211,77,0.85)'; ctx.beginPath(); ctx.moveTo(x0 + A[0][0], 0); ctx.lineTo(x0 + A[0][0], rec.h); ctx.stroke();
-    const hx = (A[23][0] + A[24][0]) / 2; ctx.strokeStyle = 'rgba(126,227,107,0.75)'; ctx.beginPath(); ctx.moveTo(x0 + hx, 0); ctx.lineTo(x0 + hx, rec.h); ctx.stroke(); ctx.setLineDash([]);
+    const hx = (A[23][0] + A[24][0]) / 2; ctx.strokeStyle = 'rgba(63,230,255,0.75)'; ctx.beginPath(); ctx.moveTo(x0 + hx, 0); ctx.lineTo(x0 + hx, rec.h); ctx.stroke(); ctx.setLineDash([]);
   }
   if (rec.addrLm && rec.view === 'dtl') { // behind view: backside line and head height at address
     const A = rec.addrLm, s = rec.s || 1;
     const back = Math.min(A[23][0], A[24][0]) * (s > 0 ? 1 : 0) + Math.max(A[23][0], A[24][0]) * (s > 0 ? 0 : 1);
     ctx.setLineDash([5, 5]); ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(126,227,107,0.75)'; ctx.beginPath(); ctx.moveTo(x0 + back - s * 8, 0); ctx.lineTo(x0 + back - s * 8, rec.h); ctx.stroke();
+    ctx.strokeStyle = 'rgba(63,230,255,0.75)'; ctx.beginPath(); ctx.moveTo(x0 + back - s * 8, 0); ctx.lineTo(x0 + back - s * 8, rec.h); ctx.stroke();
     ctx.strokeStyle = 'rgba(255,211,77,0.85)'; ctx.beginPath(); ctx.moveTo(x0, A[0][1]); ctx.lineTo(x0 + rec.w, A[0][1]); ctx.stroke(); ctx.setLineDash([]);
   }
   const L = f.lm;
   if (P.skel && L) {
-    ctx.strokeStyle = opts.colour || '#7ee36b'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.strokeStyle = opts.colour || '#3fe6ff'; ctx.lineWidth = 3; ctx.lineCap = 'round';
     for (const [a, bb] of BONES) { const p = L[a], q = L[bb]; if (!p || !q || p[2] < 0.3 || q[2] < 0.3) continue; ctx.beginPath(); ctx.moveTo(x0 + p[0], p[1]); ctx.lineTo(x0 + q[0], q[1]); ctx.stroke(); }
     const n = L[0]; if (n && n[2] > 0.3) { ctx.fillStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(x0 + n[0], n[1], 5, 0, Math.PI * 2); ctx.fill(); }
   }
@@ -1224,7 +1224,7 @@ function drawAngles(ctx, rec, L, x0) {
   for (const [h, k, a] of [[23, 25, 27], [24, 26, 28]]) { const A = pt(h), K = pt(k), An = pt(a); arc(A, K, An, `${ang(A, K, An)}°`, '#ffb44d'); }
   const s = rec.s || 1;
   const leadArm = rec.view === 'dtl' ? [11, 13, 15] : (s > 0 ? [11, 13, 15] : [12, 14, 16]);
-  { const a = pt(leadArm[0]), b = pt(leadArm[1]), c = pt(leadArm[2]); arc(a, b, c, `${ang(a, b, c)}°`, '#6fc3ff'); }
+  { const a = pt(leadArm[0]), b = pt(leadArm[1]), c = pt(leadArm[2]); arc(a, b, c, `${ang(a, b, c)}°`, '#ffffff'); }
   // spine line: mid-hips to mid-shoulders, angle from vertical
   const hm = { x: (pt(23).x + pt(24).x) / 2, y: (pt(23).y + pt(24).y) / 2 }, sm = { x: (pt(11).x + pt(12).x) / 2, y: (pt(11).y + pt(12).y) / 2 };
   if (pt(23).v > 0.4 && pt(11).v > 0.4) {
@@ -1241,7 +1241,7 @@ function drawPlayer() {
   const c = $('#swCanvas'), ctx = c.getContext('2d');
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
   drawSwingPanel(ctx, r, P.bmps, P.t, 0);
-  if (P.cmp) drawSwingPanel(ctx, P.cmp, P.cbmps, Math.max(P.cmp.frames[0].t, Math.min(P.cmp.frames[P.cmp.frames.length - 1].t, P.t)), r.w + 6, { colour: '#6fc3ff' });
+  if (P.cmp) drawSwingPanel(ctx, P.cmp, P.cbmps, Math.max(P.cmp.frames[0].t, Math.min(P.cmp.frames[P.cmp.frames.length - 1].t, P.t)), r.w + 6, { colour: '#ff7a1a' });
   // user drawings (stored in the left panel's pixels)
   drawUserMarks(ctx);
   const span = r.frames[r.frames.length - 1].t - r.frames[0].t || 1;
@@ -1419,7 +1419,7 @@ async function snapshotNow(d) {
     const k = W / aw;
     if (d && d.cands) { ctx.strokeStyle = '#6fc3ff'; ctx.lineWidth = 3; ctx.fillStyle = '#6fc3ff'; ctx.font = '16px system-ui'; for (const cd of d.cands) { ctx.beginPath(); ctx.arc(cd.x * k, cd.y * k, Math.max(10, cd.d * k), 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${cd.d.toFixed(0)}px c${cd.contrast.toFixed(0)}`, cd.x * k + 14, cd.y * k - 10); } }
     const b = (d && d.ball) || eng.ball;
-    if (b) { ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(b.x * k, b.y * k, Math.max(14, b.d * k * 1.4), 0, Math.PI * 2); ctx.stroke(); }
+    if (b) { ctx.strokeStyle = '#3fe6ff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(b.x * k, b.y * k, Math.max(14, b.d * k * 1.4), 0, Math.PI * 2); ctx.stroke(); }
   }
   ctx.fillStyle = '#fff'; ctx.font = MONO.replace('13px', '18px');
   const lines = reportText(d).split('\n').slice(1, 5);
@@ -1447,7 +1447,7 @@ function shotSheet() {
     const x0 = (i % cols) * tw, y0 = Math.floor(i / cols) * th;
     ctx.drawImage(grayToCanvas(f.g, ev.w, ev.h), x0, y0, tw, th);
     ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, tw, th); ctx.clip();
-    ctx.strokeStyle = '#7ee36b'; ctx.lineWidth = 2;
+    ctx.strokeStyle = '#3fe6ff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x0 + ev.tee.x * k, y0 + ev.tee.y * k, Math.max(6, ev.tee.d * k * 1.4), 0, Math.PI * 2); ctx.stroke();
     if (ev.track) for (const p of ev.track.pts) if (Math.abs(p.t - f.t) < 1e-6) { ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x0 + p.x * k, y0 + p.y * k, Math.max(7, p.d * k * 1.5), 0, Math.PI * 2); ctx.stroke(); }
     ctx.restore();
@@ -1679,6 +1679,8 @@ applyUnits();
 $('#startNote').textContent = `Version ${VERSION} · works best in Safari on iPhone, in landscape, outdoors in daylight.`;
 $('#brandVer').textContent = 'v' + VERSION;
 showSection('drive');
+// the range is drawn on a canvas: redraw once the Neon Grid fonts have loaded
+try { document.fonts.ready.then(() => range.draw(performance.now() + 1e7)); } catch { /* old browser */ }
 const lastShot = sessionShots().filter((s) => !s.miss).pop();
 if (lastShot) showNumbers(lastShot);
 
