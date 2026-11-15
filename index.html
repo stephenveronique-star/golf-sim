@@ -146,6 +146,41 @@ body[data-ready=tee] .setup::after { box-shadow: inset 0 0 0 10px #ffb44d; }
 .tips .scoreline em { margin-left: auto; font-style: normal; color: var(--muted); font-size: 13px; }
 .swings .summary { background: #0a140d; border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0; font-size: 14px; }
 
+/* sections */
+.sections { display: flex; gap: 2px; background: var(--panel2); border-radius: 11px; padding: 3px; }
+.sections button { padding: 5px 10px; border-radius: 8px; font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.sections button.on { background: var(--accent); color: #0b1a0e; }
+body[data-sec=info] .drive-only, body[data-sec=game] .drive-only { display: none; }
+.page { position: absolute; inset: 0; z-index: 6; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; -webkit-user-select: text; user-select: text; }
+.page .inner { max-width: 860px; margin: 0 auto; padding: 14px 16px 40px; }
+.page h3 { margin: 22px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--accent); }
+.page .sub { color: var(--muted); font-size: 13px; }
+.page .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.page .stats > div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.page .stats b { display: block; font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.page .stats span { color: var(--muted); font-size: 12px; }
+.page .row[data-sw] { cursor: pointer; }
+.page .sess { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 6px 0; padding: 4px 8px; }
+.page .sess-h { display: grid; grid-template-columns: 1fr auto; padding: 6px 2px; cursor: pointer; }
+.page .sess .go { color: var(--accent); font-weight: 700; align-self: center; }
+.page .chart { width: 100%; height: 150px; display: block; }
+.page .work { background: #24361f; border: 1px solid #3c5a32; border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
+.page .work-h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.page .work-h b { font-size: 16px; }
+.page .work .num { background: var(--accent2); color: #1a1400; border-radius: 50%; width: 22px; height: 22px; display: inline-grid; place-items: center; font-weight: 800; font-size: 13px; }
+.page .work .drill { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #3c5a32; font-size: 14px; color: #cfe3d4; }
+.page .tip.good { color: var(--muted); padding: 4px 2px; }
+.page .summary { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.page .goal select { margin-top: 8px; width: 100%; font: inherit; padding: 6px; border-radius: 8px; }
+.page #goalChart { width: 100%; height: 140px; display: block; margin: 8px 0 4px; }
+.page .goalstats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.page .goalstats b { color: #fff; }
+.page .soon { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; margin-left: 6px; letter-spacing: 0.04em; }
+.page .later { color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding: 12px; }
+.start .row2 { display: flex; gap: 10px; } .start .row2 .btn { flex: 1; }
+@media (max-width: 920px) { .sections .my { display: none; } .brand > :not(small) { } }
+@media (max-width: 760px) { .brand { display: none; } }
+
 /* overlays */
 .overlay { position: fixed; inset: 0; background: rgba(4,10,6,0.82); display: none; z-index: 20; padding: calc(var(--safe-t) + 12px) calc(var(--safe-r) + 12px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px); }
 .overlay.show { display: flex; align-items: center; justify-content: center; }
@@ -224,12 +259,13 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
 <div class="app">
   <div class="bar">
     <div class="brand">GOLF<span>SIM</span> <small id="brandVer" style="font-size:11px;color:var(--muted);font-weight:600"></small></div>
+    <div class="sections" id="sections"><button data-sec="drive" class="on">⛳ <span class="my">My </span>Drive</button><button data-sec="info">📊 <span class="my">My </span>Info</button><button data-sec="game">🎯 <span class="my">My </span>Game</button></div>
     <div class="pill off" id="status" title=""><i></i><span>Camera off</span></div>
     <div class="spacer"></div>
-    <button class="btn club-btn" id="clubBtn">7 Iron</button>
-    <button class="btn" id="cameraBtn">Camera</button>
+    <button class="btn club-btn drive-only" id="clubBtn">7 Iron</button>
+    <button class="btn drive-only" id="cameraBtn">Camera</button>
     <button class="icon-btn" id="helpBtn" aria-label="Setup guide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg></button>
-    <button class="icon-btn" id="swingsBtn" aria-label="My swings" title="My swings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg></button>
+    <button class="icon-btn drive-only" id="swingsBtn" aria-label="My swings" title="My swings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M16 10l6-3v10l-6-3z"/></svg></button>
     <button class="icon-btn" id="diagBtn" aria-label="Help me fix it" title="Help me fix it"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
   </div>
@@ -261,6 +297,8 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
       <div class="list" id="list"></div>
       <div class="actions"><button class="btn" id="replayBtn">Replay last</button><button class="btn" id="clearBtn">New session</button></div>
     </div>
+    <div class="page" id="pageInfo" hidden><div class="inner"></div></div>
+    <div class="page" id="pageGame" hidden><div class="inner"></div></div>
   </div>
 </div>
 
@@ -272,6 +310,7 @@ svg.diagram { width: 100%; height: auto; background: #10301c; border-radius: 12p
     <div class="btns">
       <button class="btn primary" id="startCam">Start camera</button>
       <button class="btn" id="startGuide">How to set up</button>
+      <div class="row2"><button class="btn" id="startInfo">📊 My Info</button><button class="btn" id="startGame">🎯 My Game</button></div>
     </div>
     <div class="note" id="startNote">Works best in Safari on iPhone, in landscape, outdoors in daylight.</div>
   </div>

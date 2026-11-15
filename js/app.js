@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -338,6 +338,7 @@ function droppedFrames(ev) {
 }
 function onEngineEvent(ev) {
   try { window.__golf?.onEvent?.(ev); } catch { /* test hook */ }
+  if ((ev.type === 'shot' || ev.type === 'missed') && section !== 'drive') showSection('drive');
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
@@ -1038,7 +1039,6 @@ async function openSwings(id, opts = {}) {
   let list = [];
   try { list = await listSwings(); } catch (e) { $('#swList').innerHTML = `<div class="empty">Couldn’t open saved swings (${e.message || e}).</div>`; return; }
   if (!list.length) { $('#swList').innerHTML = '<div class="empty">No swings saved yet. Every shot the app reads is saved here with a slow-motion replay and your swing check (keep “Swing tips” on in Settings).</div>'; return; }
-  const goalHtml = renderGoal(list);
   const ok = list.filter((r) => r.ok && r.metrics).slice(0, 10);
   let sum = '';
   if (ok.length) {
@@ -1051,9 +1051,8 @@ async function openSwings(id, opts = {}) {
       Score ${R(avg((r) => r.score), '/10', 1)} · tempo ${R(avg((r) => r.metrics.tempo), ':1', 1)} · ${ok[0].view === 'dtl' ? `posture ${R(avg((r) => r.metrics.spineAngle), '°')} · hips toward ball ${R(avg((r) => r.metrics.earlyExtCm), ' cm')}` : `head on backswing ${R(avg((r) => r.metrics.headTopCm), ' cm')} · hips at impact ${R(avg((r) => r.metrics.hipImpCm), ' cm')}`}<br>
       ${common.length ? `Most common: ${common.map(([t, n]) => `<span style="color:var(--accent2)">${t}</span> (${n}×)`).join(', ')}` : '<span style="color:var(--accent)">No repeated faults</span>'}</div>`;
   }
-  $('#swList').innerHTML = goalHtml + sum + list.map((r) => `<div class="row-sw" data-sw="${r.id}"><div><b>${r.best ? '⭐ ' : ''}${swingTitle(r)}</b> <span class="sub">· ${fmtWhen(r.ts)}${r.view === 'dtl' ? ' · behind' : ''}</span>
+  $('#swList').innerHTML = sum + list.map((r) => `<div class="row-sw" data-sw="${r.id}"><div><b>${r.best ? '⭐ ' : ''}${swingTitle(r)}</b> <span class="sub">· ${fmtWhen(r.ts)}${r.view === 'dtl' ? ' · behind' : ''}</span>
     <div class="${r.ok ? 'tip' : 'sub'}">${r.ok ? `<span style="color:${scoreColour(r.score)};font-weight:800">${(r.score ?? 0).toFixed(1)}</span> · ${r.tips.length ? r.tips.slice(0, 2).map((t) => t.short).join(' · ') : '✓ Looks good'}` : 'Swing not checked — ' + (NOTES[r.reason] || 'body not seen')}</div></div><div class="go">▶︎</div></div>`).join('');
-  drawGoalChart(list);
 }
 
 function renderGoal(list) {
@@ -1075,22 +1074,26 @@ function drawGoalChart(list) {
   const c = $('#goalChart'); const g = GOALS[S.goal];
   if (!c || !g) return;
   const pts = list.filter((r) => r.ok && (g.both || r.view === g.view)).map((r) => g.get(r)).filter((v) => v != null && isFinite(v)).reverse().slice(-30);
-  const W = c.clientWidth || 600, H = 140, dpr = Math.min(2, devicePixelRatio || 1);
+  drawSeries(c, pts, g.band, g.unit, g.dp || 0);
+}
+// a line of values with a green target band; dots green when on target
+function drawSeries(c, pts, band, unit = '', dp = 0) {
+  const W = c.clientWidth || 600, H = c.clientHeight || 140, dpr = Math.min(2, devicePixelRatio || 1);
   c.width = W * dpr; c.height = H * dpr;
   const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const lo = Math.min(g.band[0], ...pts) - 2, hi = Math.max(g.band[1], ...pts) + 2;
+  const pad = (band[1] - band[0]) * 0.25 || 2;
+  const lo = Math.min(band[0], ...pts) - pad, hi = Math.max(band[1], ...pts) + pad;
   const Y = (v) => H - 14 - ((v - lo) / (hi - lo || 1)) * (H - 24), X = (i) => 30 + (i / Math.max(1, pts.length - 1)) * (W - 44);
-  ctx.fillStyle = 'rgba(126,227,107,0.18)'; ctx.fillRect(30, Y(g.band[1]), W - 44, Y(g.band[0]) - Y(g.band[1]));
+  ctx.fillStyle = 'rgba(126,227,107,0.18)'; ctx.fillRect(30, Y(band[1]), W - 44, Y(band[0]) - Y(band[1]));
   ctx.fillStyle = '#9db8a6'; ctx.font = '11px system-ui';
-  ctx.fillText(String(g.band[1]), 2, Y(g.band[1]) + 4); ctx.fillText(String(g.band[0]), 2, Y(g.band[0]) + 4);
+  ctx.fillText(String(band[1]), 2, Y(band[1]) + 4); ctx.fillText(String(band[0]), 2, Y(band[0]) + 4);
   if (!pts.length) return;
-  ctx.strokeStyle = '#ff7a8a'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2; ctx.beginPath();
   pts.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)))); ctx.stroke();
-  pts.forEach((v, i) => { const ok = v >= g.band[0] && v <= g.band[1]; ctx.fillStyle = ok ? '#7ee36b' : '#ff7a8a'; ctx.beginPath(); ctx.arc(X(i), Y(v), 3.5, 0, Math.PI * 2); ctx.fill(); });
+  pts.forEach((v, i) => { const ok = v >= band[0] && v <= band[1]; ctx.fillStyle = ok ? '#7ee36b' : '#ff7a8a'; ctx.beginPath(); ctx.arc(X(i), Y(v), 3.5, 0, Math.PI * 2); ctx.fill(); });
   const lastV = pts[pts.length - 1];
-  ctx.fillStyle = '#fff'; ctx.font = '600 12px system-ui'; ctx.fillText(lastV.toFixed(g.dp || 0) + g.unit, Math.min(W - 50, X(pts.length - 1) - 10), Y(lastV) - 8);
+  ctx.fillStyle = '#fff'; ctx.font = '600 12px system-ui'; ctx.fillText(lastV.toFixed(dp) + unit, Math.min(W - 50, X(pts.length - 1) - 10), Y(lastV) - 8);
 }
-$('#swList').addEventListener('change', (e) => { if (e.target.id === 'goalSel') { S.goal = e.target.value; saveSettings(); openSwings(); } });
 $('#swList').addEventListener('click', (e) => { const row = e.target.closest('[data-sw]'); if (row) openPlayer(+row.dataset.sw); });
 $('#swingsBtn').addEventListener('click', () => openSwings());
 $('#swBack').addEventListener('click', () => openSwings());
@@ -1503,19 +1506,179 @@ renderTeeChip();
 document.addEventListener('touchend', () => unlockAudio(), { passive: true });
 document.addEventListener('click', () => unlockAudio());
 
+// ------------------------------------------------------------ sections: My Drive / My Info / My Game
+let section = 'drive';
+function showSection(sec) {
+  section = sec;
+  document.body.dataset.sec = sec;
+  $$('#sections button').forEach((b) => b.classList.toggle('on', b.dataset.sec === sec));
+  $('#pageInfo').hidden = sec !== 'info';
+  $('#pageGame').hidden = sec !== 'game';
+  if (sec === 'info') renderInfo();
+  if (sec === 'game') renderGame();
+  if (sec === 'drive' && !running) $('#start').classList.remove('hide'); // camera not on yet: offer to start it
+}
+$$('#sections button').forEach((b) => b.addEventListener('click', () => showSection(b.dataset.sec)));
+
+const realShots = () => shots.filter((s) => !s.miss && !s.demo);
+const avg = (v) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
+const fmtDay = (ts) => new Date(ts).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+// trimmed mean: drop the top and bottom 10% once there are enough shots
+const trimmed = (arr) => { const v = arr.slice().sort((p, q) => p - q); const k = v.length >= 10 ? Math.floor(v.length * 0.1) : 0; return avg(v.slice(k, v.length - k)); };
+
+// ---- My Info: results at the desk
+let openSession = null;
+function renderInfo() {
+  const real = realShots();
+  const sessions = [...new Set(shots.map((s) => s.session))].sort((a, b) => b - a);
+  const checked = shots.filter((s) => s.swing && s.swing.ok);
+  const last10 = checked.slice(-10).map((s) => s.swing.score).filter((v) => v != null);
+  let h = `<div class="stats">
+    <div><b>${real.length}</b><span>shots</span></div>
+    <div><b>${sessions.length}</b><span>session${sessions.length === 1 ? '' : 's'}</span></div>
+    <div><b>${checked.length}</b><span>swings checked</span></div>
+    <div><b>${last10.length ? avg(last10).toFixed(1) : '—'}</b><span>swing score (last 10)</span></div>
+  </div>`;
+
+  // distances per club
+  h += '<h3>My distances</h3>';
+  const by = {};
+  for (const s of real) (by[s.club] ||= []).push(s);
+  const ids = CLUBS.map((c) => c.id).filter((id) => by[id]);
+  if (!ids.length) h += '<div class="empty">Your average distance for each club builds up here as you hit shots.</div>';
+  else {
+    const cols = 'grid-template-columns:52px 1fr 1fr 1fr 1fr 1fr';
+    h += `<div class="row head" style="${cols}"><div>Club</div><div>Carry</div><div>Total</div><div>Longest</div><div>Spread</div><div>Shots</div></div>`;
+    for (const id of ids) {
+      const a = by[id], carries = a.map((s) => s.carry);
+      const sd = a.length > 2 ? Math.sqrt(avg(carries.map((c) => (c - avg(carries)) ** 2))) : null;
+      h += `<div class="row" style="${cols}"><div class="club">${id}</div><div><b>${fmtDist(trimmed(carries))}</b></div><div>${fmtDist(trimmed(a.map((s) => s.total)))}</div><div>${fmtDist(Math.max(...carries))}</div><div>${sd != null ? '±' + fmtDist(sd) : '—'}</div><div>${a.length}</div></div>`;
+    }
+    h += `<div class="empty">Carry and total are averages in ${S.dist === 'yd' ? 'yards' : 'metres'} (the odd mishit is left out once you have 10 shots). Spread = how far your carries usually vary — smaller is more consistent.</div>`;
+  }
+
+  // sessions
+  h += '<h3>Sessions</h3>';
+  if (!sessions.length) h += '<div class="empty">No sessions yet — go to My Drive and hit some balls.</div>';
+  for (const sid of sessions) {
+    const list = shots.filter((s) => s.session === sid);
+    const r = list.filter((s) => !s.miss && !s.demo);
+    const clubs = [...new Set(r.map((s) => s.club))];
+    const sw = list.filter((s) => s.swing && s.swing.ok);
+    const ts = list.length ? list[0].ts : sid;
+    const open = openSession === sid;
+    h += `<div class="sess${open ? ' open' : ''}" data-sess="${sid}"><div class="sess-h"><div><b>${fmtDay(ts)}</b> <span class="sub">${new Date(ts).toTimeString().slice(0, 5)}${sid === session ? ' · current' : ''}</span>
+      <div class="sub">${r.length} shot${r.length === 1 ? '' : 's'}${clubs.length ? ' · ' + clubs.join(', ') : ''}${sw.length ? ` · swing score ${avg(sw.map((s) => s.swing.score).filter((v) => v != null)).toFixed(1)}` : ''}</div></div><div class="go">${open ? '▾' : '▸'}</div></div>`;
+    if (open) {
+      const cols = 'grid-template-columns:44px 1fr 1fr 1fr 1fr 1fr';
+      h += `<div class="row head" style="${cols}"><div>Club</div><div>Carry</div><div>Total</div><div>Side</div><div>Speed ${S.speed === "kmh" ? "km/h" : S.speed === "ms" ? "m/s" : "mph"}</div><div>Swing</div></div>`;
+      for (const s of list.slice().reverse()) {
+        const swc = s.swing && s.swing.ok && s.swing.score != null ? `<span style="color:${scoreColour(s.swing.score)}">${s.swing.score.toFixed(1)} ▶︎</span>` : '';
+        if (s.miss) { h += `<div class="row miss" style="${cols}" ${s.swing ? `data-sw="${s.id}"` : ''}><div class="club">${s.club}</div><div style="grid-column: span 4">${s.swingOnly ? 'swing only' : 'not read'}</div><div>${swc}</div></div>`; continue; }
+        const side = Math.abs(+fmtDist(s.offline, 0)) < 1 ? '—' : `${Math.abs(+fmtDist(s.offline, 0))}${s.offline > 0 ? 'R' : 'L'}`;
+        h += `<div class="row" style="${cols}" ${s.swing ? `data-sw="${s.id}"` : ''}><div class="club">${s.club}${s.demo ? '*' : ''}</div><div>${fmtDist(s.carry)}</div><div>${fmtDist(s.total)}</div><div>${side}</div><div>${spdNum(s.speed)}</div><div>${swc}</div></div>`;
+      }
+    }
+    h += '</div>';
+  }
+
+  // swings
+  h += `<h3>My swings</h3><div class="sub" style="margin-bottom:8px">Your last 25 swings are kept on this phone with slow-motion replay, angles, drawing, sequence and compare.</div>
+    <button class="btn primary" id="infoSwings">🎥 Watch my swings</button>
+    <h3>Keep a copy</h3><button class="btn" id="infoExport">⬇︎ Export all shots (spreadsheet)</button>
+    <div class="sub" style="margin-top:6px">Makes a CSV file you can open in Excel or Numbers, or save to Files.</div>`;
+  $('#pageInfo .inner').innerHTML = h;
+}
+$('#pageInfo').addEventListener('click', (e) => {
+  if (e.target.id === 'infoSwings') { openSwings(); return; }
+  if (e.target.id === 'infoExport') { exportShots(); return; }
+  const sw = e.target.closest('[data-sw]'); if (sw) { openSwings(+sw.dataset.sw); return; }
+  const ss = e.target.closest('.sess-h'); if (ss) { const id = +ss.parentElement.dataset.sess; openSession = openSession === id ? null : id; renderInfo(); }
+});
+function spdNum(v) { if (v == null) return '—'; return S.speed === 'kmh' ? (v * 3.6).toFixed(0) : S.speed === 'ms' ? v.toFixed(1) : (v / MPH).toFixed(0); }
+
+async function exportShots() {
+  const head = ['date', 'time', 'club', 'carry_m', 'total_m', 'offline_m', 'ball_speed_mph', 'launch_deg', 'direction_deg', 'apex_m', 'spin_rpm_est', 'swing_score', 'tempo', 'swing_tips', 'note'];
+  const q = (v) => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const rows = shots.map((s) => { const d = new Date(s.ts); const w = s.swing && s.swing.ok ? s.swing : null; return [
+    d.toISOString().slice(0, 10), d.toTimeString().slice(0, 5), s.club,
+    s.miss ? '' : s.carry.toFixed(1), s.miss ? '' : s.total.toFixed(1), s.miss ? '' : s.offline.toFixed(1), s.miss ? '' : (s.speed / MPH).toFixed(1),
+    s.miss ? '' : s.launch.toFixed(1), s.miss ? '' : s.dir.toFixed(1), s.miss ? '' : s.apex.toFixed(1), s.miss ? '' : Math.round(s.spin),
+    w && w.score != null ? w.score : '', w && w.tempo ? w.tempo.toFixed(1) : '', w ? (w.tips || []).map((t) => t.short).join('; ') : '',
+    s.demo ? 'demo' : s.swingOnly ? 'swing only' : s.miss ? 'not read' : ''].map(q).join(','); });
+  const file = new File([[head.join(','), ...rows].join('\n')], `golf-shots-${new Date().toISOString().slice(0, 10)}.csv`, { type: 'text/csv' });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'My golf shots' }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---- My Game: what to work on, progress, (later) rounds
+async function renderGame() {
+  const el = $('#pageGame .inner');
+  let list = [];
+  try { list = await listSwings(); } catch { /* no saved swings */ }
+  const ok = list.filter((r) => r.ok); // newest first
+  let h = '';
+  if (!ok.length) {
+    h += '<div class="empty">Your coaching builds up here: the faults that keep coming up with a drill for each, your swing score and tempo over time, and a training goal. Hit a few shots in My Drive with Swing tips on (Settings › My swing).</div>';
+  } else {
+    const recent = ok.slice(0, 10), prev = ok.slice(10, 20);
+    const sc = (a) => avg(a.map((r) => r.score).filter((v) => v != null));
+    const tp = avg(recent.map((r) => r.metrics && r.metrics.tempo).filter((v) => v));
+    const now = sc(recent), before = prev.length >= 3 ? sc(prev) : null;
+    const trend = before == null ? '' : now > before + 0.3 ? `📈 up from ${before.toFixed(1)}` : now < before - 0.3 ? `📉 down from ${before.toFixed(1)}` : '➡︎ steady';
+    h += `<div class="stats">
+      <div><b style="color:${scoreColour(now)}">${now.toFixed(1)}</b><span>swing score (last ${recent.length}) ${trend}</span></div>
+      <div><b>${tp ? tp.toFixed(1) + ':1' : '—'}</b><span>tempo (good ≈ 3:1)</span></div>
+      <div><b>${ok.length}</b><span>swings checked</span></div>
+    </div>`;
+    h += '<h3>Swing score, every swing</h3><canvas class="chart" id="scoreChart"></canvas>';
+
+    // what to work on: faults that keep coming up, newest wording and the drill
+    const faults = {};
+    for (const r of ok.slice(0, 20)) for (const t of r.tips) { const f = (faults[t.key] ||= { n: 0, t }); f.n++; }
+    const top = Object.values(faults).sort((a, b) => b.n - a.n).slice(0, 3);
+    const n = Math.min(20, ok.length);
+    h += '<h3>What to work on</h3>';
+    if (!top.length) h += '<div class="tip good">No faults keep coming up in your last swings — keep it going.</div>';
+    top.forEach(({ n: k, t }, i) => {
+      h += `<div class="work"><div class="work-h"><span class="num">${i + 1}</span><b>${t.short}</b><span class="sub">in ${k} of your last ${n} swings</span></div>
+        <div>${t.text}</div>${t.drill ? `<div class="drill">🏌️ ${t.drill}</div>` : ''}</div>`;
+    });
+    // what's going well
+    const goods = {};
+    for (const r of ok.slice(0, 10)) for (const g of r.good || []) { const k = g.replace(/\s*\(.*\)$/, '').replace(/[\d.]+:1/, ''); goods[k] = (goods[k] || 0) + 1; }
+    const well = Object.entries(goods).sort((a, b) => b[1] - a[1]).slice(0, 4).filter(([, c]) => c >= Math.max(2, recent.length / 2));
+    if (well.length) h += `<h3>Going well</h3>${well.map(([g]) => `<div class="tip good">✓ ${g}</div>`).join('')}`;
+  }
+  // training goal
+  h += '<h3>Training goal</h3>' + renderGoal(list);
+  // coming later
+  h += `<h3>My rounds <span class="soon">coming later</span></h3>
+    <div class="later">Your handicap, the courses you’ve played and your scorecards will live here, alongside how your range work carries onto the course.</div>`;
+  el.innerHTML = h;
+  const scoreVals = ok.map((r) => r.score).filter((v) => v != null).reverse().slice(-30);
+  if ($('#scoreChart')) drawSeries($('#scoreChart'), scoreVals, [8, 10], '', 1);
+  drawGoalChart(list);
+}
+$('#pageGame').addEventListener('change', (e) => { if (e.target.id === 'goalSel') { S.goal = e.target.value; saveSettings(); renderGame(); } });
+
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
   unlockAudio('Camera on');
+  showSection('drive');
   $('#start').classList.add('hide');
   openSetup();
 });
 
 $('#startGuide').addEventListener('click', () => openSheet('#helpSheet'));
+$('#startInfo').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('info'); });
+$('#startGame').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('game'); });
 
 renderClubs();
 applyUnits();
 $('#startNote').textContent = `Version ${VERSION} · works best in Safari on iPhone, in landscape, outdoors in daylight.`;
 $('#brandVer').textContent = 'v' + VERSION;
+showSection('drive');
 const lastShot = sessionShots().filter((s) => !s.miss).pop();
 if (lastShot) showNumbers(lastShot);
 
