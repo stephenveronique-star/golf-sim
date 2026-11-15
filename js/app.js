@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.2';
+const VERSION = '1.8.3';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -343,6 +343,7 @@ function onEngineEvent(ev) {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
     checkFraming(ev.ball);
+    if (gNow) { gRef = { ...gNow }; tiltDeg = 0; }
     setStatus('ready', 'Ready — hit away');
     $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
     updateReady();
@@ -379,7 +380,7 @@ function onEngineEvent(ev) {
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) { const rec = recordShot(ev.launch); if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); }
   } else if (ev.type === 'moved') {
-    eng.state = 'waiting'; updateReady();
+    eng.state = 'waiting'; phoneMovedFromPicture();
     log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
     movedTimes = movedTimes.filter((t) => performance.now() - t < 120000); movedTimes.push(performance.now());
     if (movedTimes.length >= 3) { toast('The phone keeps moving — it looks hand-held. The app compares pictures to find the ball, so even a small wobble looks like movement. Put the phone on a stand, or prop it against something solid.', 9000); say('The phone keeps moving. Please put it on a stand.'); movedTimes = []; }
@@ -728,13 +729,15 @@ let wasPortrait = null;
 function updateReady() {
   const portrait = running && video.videoHeight > video.videoWidth;
   if (portrait !== wasPortrait && running && video.videoWidth) { log(portrait ? 'phone is upright (portrait) — waiting for landscape' : 'phone is sideways (landscape)'); wasPortrait = portrait; }
-  const st = !running ? 'off' : portrait ? 'turn' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
+  const tilted = running && !portrait && gRef && tiltDeg >= TILT_WARN;
+  const moved = running && !portrait && performance.now() < phoneMovedUntil;
+  const st = !running ? 'off' : portrait ? 'turn' : tilted ? 'tilt' : moved ? 'moved' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
   document.body.dataset.ready = st;
   const el = $('#readyLight');
-  el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : st === 'turn' ? 'TURN PHONE SIDEWAYS' : '';
-  el.querySelector('span').textContent = st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : st === 'turn' ? 'Already sideways? Rotation lock is on — swipe down from the top-right corner and tap the 🔒 button to turn it off' : '';
+  el.querySelector('b').textContent = st === 'ready' ? 'READY' : st === 'tee' ? 'TEE UP' : st === 'look' ? 'PUT A BALL DOWN' : st === 'turn' ? 'TURN PHONE SIDEWAYS' : st === 'tilt' ? 'PHONE TILTED' : st === 'moved' ? 'PHONE MOVED' : '';
+  el.querySelector('span').textContent = st === 'tilt' ? `Tilted ${tiltDeg.toFixed(0)}° — put it back or keep it still` : st === 'moved' ? 'Keep it still — finding the ball again' : st === 'ready' ? 'Hit away' : st === 'tee' ? 'Same spot as before' : st === 'look' ? 'I’ll find it — or tap it on the camera screen' : st === 'turn' ? 'Already sideways? Rotation lock is on — swipe down from the top-right corner and tap the 🔒 button to turn it off' : '';
   if ($('#setup').classList.contains('show') && st !== lastReadySt) {
-    $('#setupMsg').textContent = st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : st === 'turn' ? 'Turn the phone sideways. Already sideways? Turn off rotation lock: swipe down from the top-right corner, tap the 🔒 button' : 'Put a ball down and step back — I’ll find it (or tap it)';
+    $('#setupMsg').textContent = st === 'tilt' ? `Phone tilted ${tiltDeg.toFixed(0)}° — put it back where it was, or keep it still` : st === 'moved' ? 'The phone moved — keep it still (use a stand)' : st === 'ready' ? 'Ready — hit away' : st === 'tee' ? 'Tee up the next ball in the same spot' : st === 'turn' ? 'Turn the phone sideways. Already sideways? Turn off rotation lock: swipe down from the top-right corner, tap the 🔒 button' : 'Put a ball down and step back — I’ll find it (or tap it)';
   }
   lastReadySt = st;
 }
@@ -783,26 +786,54 @@ function updateChips() {
   } else { cb.textContent = 'Ball: tap it'; cb.className = 'chip'; }
 }
 
-// Level (device tilt) — magnitude only
-let motionOn = false;
-$('#cLevel').addEventListener('click', async () => {
+// Phone position watch (motion sensor). When the ball is found we remember
+// which way gravity points; if the phone then tilts away from that, we say so.
+let motionOn = false, motionAsked = false, gRef = null, gNow = null, tiltDeg = 0, tiltSince = 0;
+async function startMotion(fromTap) {
+  if (motionOn) return true;
   try {
     if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) {
-      const r = await DeviceMotionEvent.requestPermission(); if (r !== 'granted') { toast('Motion access refused'); return; }
+      if (!fromTap && motionAsked) return false;
+      motionAsked = true;
+      const r = await DeviceMotionEvent.requestPermission();
+      if (r !== 'granted') { log('motion sensor refused — phone tilt warnings only from the camera picture'); return false; }
     }
-  } catch { /* desktop */ }
-  if (motionOn) return; motionOn = true;
+  } catch { return false; }
+  motionOn = true;
   let last = 0;
   window.addEventListener('devicemotion', (e) => {
     const g = e.accelerationIncludingGravity; if (!g || g.x == null) return;
-    const now = performance.now(); if (now - last < 200) return; last = now;
+    const now = performance.now(); if (now - last < 100) return; last = now;
+    // smooth out hand tremor and swing vibration a little
+    gNow = gNow ? { x: gNow.x * 0.6 + g.x * 0.4, y: gNow.y * 0.6 + g.y * 0.4, z: gNow.z * 0.6 + g.z * 0.4 } : { x: g.x, y: g.y, z: g.z };
+    if (gRef) {
+      const dot = gRef.x * gNow.x + gRef.y * gNow.y + gRef.z * gNow.z, n = Math.hypot(gRef.x, gRef.y, gRef.z) * Math.hypot(gNow.x, gNow.y, gNow.z);
+      const deg = n ? (Math.acos(Math.max(-1, Math.min(1, dot / n))) * 180) / Math.PI : 0;
+      const was = tiltDeg >= TILT_WARN; tiltDeg = deg;
+      if (deg >= TILT_WARN && !was) { tiltSince = now; onPhoneTilted(deg); }
+      if ((deg >= TILT_WARN) !== was) updateReady();
+    }
     const el = $('#cLevel');
     if (Math.abs(g.x) < Math.abs(g.y)) { el.textContent = 'Turn the phone to landscape'; el.className = 'chip warn'; return; }
     const roll = (Math.atan2(Math.abs(g.y), Math.abs(g.x)) * 180) / Math.PI;
-    el.textContent = `Tilt ${roll.toFixed(1)}° ${roll < 1 ? '✓ level' : ''}`;
-    el.className = 'chip ' + (roll < 1 ? 'ok' : roll < 2.5 ? 'warn' : 'bad');
+    el.textContent = `Level ${roll.toFixed(1)}°${roll < 1 ? ' ✓' : ''}${gRef ? ` · moved ${tiltDeg.toFixed(1)}°` : ''}`;
+    el.className = 'chip ' + (roll < 1 && tiltDeg < TILT_WARN ? 'ok' : roll < 2.5 && tiltDeg < TILT_WARN ? 'warn' : 'bad');
   });
-});
+  log('motion sensor on — will warn if the phone tilts');
+  return true;
+}
+const TILT_WARN = 2.5; // degrees away from where it was when the ball was found
+let lastMoveSay = 0, phoneMovedUntil = 0;
+function onPhoneTilted(deg) {
+  log(`PHONE TILTED ${deg.toFixed(1)}° from where it was when the ball was found`);
+  if (performance.now() - lastMoveSay > 8000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone has moved. Put it back, or keep it still.'); }
+}
+function phoneMovedFromPicture() {
+  phoneMovedUntil = performance.now() + 4000; updateReady();
+  setTimeout(updateReady, 4100);
+  if (performance.now() - lastMoveSay > 8000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone moved. Keep it still.'); }
+}
+$('#cLevel').addEventListener('click', () => startMotion(true));
 
 function openSetup() {
   $('#setup').classList.add('show');
@@ -812,7 +843,7 @@ function openSetup() {
 }
 function closeSetup() { $('#setup').classList.remove('show'); }
 $('#setupDone').addEventListener('click', closeSetup);
-$('#cameraBtn').addEventListener('click', () => { unlockAudio('Camera on'); openSetup(); });
+$('#cameraBtn').addEventListener('click', () => { unlockAudio('Camera on'); startMotion(true); openSetup(); });
 
 let wakeLock = null;
 async function requestWakeLock() { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* ignore */ } }
@@ -1441,6 +1472,7 @@ function reportText(d) {
     for (const s of ss) L.push(s.miss ? `  ${s.club} not read` : `  ${s.club}${s.demo ? ' (demo)' : ''} ${(s.speed).toFixed(1)} m/s ${s.launch.toFixed(1)}° dir ${s.dir.toFixed(1)}° → carry ${s.carry.toFixed(0)} m`);
   }
   if (lastSwing) L.push(lastSwing.ok ? `last swing: tips ${lastSwing.tips.map((t) => t.key).join(', ') || 'none'} · body seen in ${lastSwing.used} pictures · scale ${lastSwing.scaleFrom}` : `last swing: not analysed (${lastSwing.reason})`);
+  L.push(`motion sensor ${motionOn ? `on · tilt from ready position ${tiltDeg.toFixed(1)}°` : 'off (tilt warnings from the camera only)'}`);
   L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? 'behind' : 'facing'}`);
   if (eng.ball && eng.w) L.push(`ball ${eng.ball.d.toFixed(1)} px ≈ ${ballDistance(eng.ball).toFixed(1)} m away · ${Math.round((eng.ball.x / eng.w) * 100)}% across the picture${framingIssue ? ' · SET-UP PROBLEM: ' + framingIssue : ''}`);
   L.push('log (newest last):');
@@ -1706,6 +1738,7 @@ $('#pageGame').addEventListener('change', (e) => { if (e.target.id === 'goalSel'
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
   unlockAudio('Camera on');
+  startMotion(true);
   showSection('drive');
   $('#start').classList.add('hide');
   openSetup();
