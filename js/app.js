@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.4';
+const VERSION = '1.8.5';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -343,7 +343,9 @@ function onEngineEvent(ev) {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
     checkFraming(ev.ball);
-    if (gNow) { gRef = { ...gNow }; tiltDeg = 0; }
+    // remember the phone's position once your hand is off it
+    tiltDeg = 0; gRef = gNow ? { ...gNow } : null;
+    setTimeout(() => { if (gNow && eng.state === 'armed') { gRef = { ...gNow }; tiltDeg = 0; updateReady(); checkLevel(); } }, 1500);
     setStatus('ready', 'Ready — hit away');
     $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
     updateReady();
@@ -824,8 +826,20 @@ async function startMotion(fromTap) {
 }
 const TILT_WARN = 2.5; // degrees away from where it was when the ball was found
 let lastMoveSay = 0, phoneMovedUntil = 0;
+let lastTiltLog = 0, lastLevelWarn = 0;
+// is the phone level (not leaning sideways)? A lean adds straight onto the launch angle.
+function checkLevel() {
+  if (!gNow || Math.abs(gNow.x) < Math.abs(gNow.y)) return;
+  const roll = (Math.atan2(gNow.y, Math.abs(gNow.x)) * 180) / Math.PI, pitch = (Math.atan2(gNow.z, Math.abs(gNow.x)) * 180) / Math.PI;
+  log(`phone level at READY: leaning sideways ${roll.toFixed(1)}° · tipped forward/back ${pitch.toFixed(1)}°`);
+  if (Math.abs(roll) >= 3 && performance.now() - lastLevelWarn > 120000) {
+    lastLevelWarn = performance.now();
+    toast(`The phone is leaning ${Math.abs(roll).toFixed(0)}° sideways — that throws the launch angle off by the same amount. Level it on the stand (Camera screen › Level chip should say ✓).`, 9000);
+    say('The phone is not level. Straighten it on the stand.');
+  }
+}
 function onPhoneTilted(deg) {
-  log(`PHONE TILTED ${deg.toFixed(1)}° from where it was when the ball was found`);
+  if (performance.now() - lastTiltLog > 10000) { lastTiltLog = performance.now(); log(`PHONE TILTED ${deg.toFixed(1)}° from where it was when the ball was found`); }
   if (performance.now() - lastMoveSay > 8000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone has moved. Put it back, or keep it still.'); }
 }
 function phoneMovedFromPicture() {

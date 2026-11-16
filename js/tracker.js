@@ -394,6 +394,14 @@ export function solveShot(track, tee, cam) {
     let num = 0, den = 0;
     for (let i = 0; i < ts.length; i++) { num += ts[i] * (ratios[i] - 1); den += ts[i] * ts[i]; }
     alpha = den ? num / den : 0;
+    // A small ball smears in flight and looks bigger than it is, which reads as
+    // "flying at the camera" and bends speed and launch. Trust size less the
+    // smaller the ball, and never beyond a plausible sideways angle.
+    alpha *= Math.max(0, Math.min(1, (tee.d - 7) / 6));
+    const tsp = ts[ts.length - 1] - ts[0] || 1e-3;
+    const vx0 = Math.abs(((pts[pts.length - 1].x - pts[0].x) * Z0) / f / tsp);
+    const aLim = (Math.tan(20 / DEG) * vx0) / Z0;
+    alpha = Math.max(-aLim, Math.min(aLim, alpha));
     Zs = ts.map((t) => Z0 * (1 + alpha * t));
     X = pts.map((p, i) => ((p.x - cx) * Zs[i]) / f);
     Y = pts.map((p, i) => (-(p.y - cy) * Zs[i]) / f + 0.5 * 9.81 * ts[i] * ts[i]);
