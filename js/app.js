@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.3';
+const VERSION = '1.8.4';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1757,6 +1757,28 @@ showSection('drive');
 try { document.fonts.ready.then(() => range.draw(performance.now() + 1e7)); } catch { /* old browser */ }
 const lastShot = sessionShots().filter((s) => !s.miss).pop();
 if (lastShot) showNumbers(lastShot);
+
+// ---- new version check: an open Safari tab keeps running the old app, so ask the
+// server which version is live and offer a one-tap update
+let updateShown = false;
+async function checkForUpdate() {
+  if (updateShown) return;
+  try {
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const live = (await r.json()).version;
+    if (!live || live === VERSION) return;
+    updateShown = true;
+    log(`new version ${live} is available (this is ${VERSION})`);
+    const bar = document.createElement('button');
+    bar.id = 'updateBar'; bar.textContent = `New version ${live} is ready — tap here to update`;
+    bar.addEventListener('click', () => { location.href = location.pathname + '?v=' + encodeURIComponent(live); });
+    document.body.appendChild(bar);
+  } catch { /* offline: try again later */ }
+}
+checkForUpdate();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+setInterval(() => { if (!document.hidden && eng.state !== 'armed') checkForUpdate(); }, 10 * 60 * 1000);
 
 // expose for automated testing
 window.__golf = { eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
