@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.7';
+const VERSION = '1.8.8';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -15,7 +15,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', view: 'face', autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -447,6 +447,25 @@ async function startCamera() {
       }
     } catch (e) { log(`couldn't switch to main camera: ${e.name || e.message}`); try { stream = await navigator.mediaDevices.getUserMedia(camConstraints(60)); } catch { /* keep going */ } }
   }
+  // Wide lens (for a phone only about 2 m away): the 0.5x Ultra Wide camera,
+  // analysed at full width so the ball stays big enough to follow.
+  if (S.lens === 'wide' && !S.camId) {
+    try {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      const wide = devs.find((d) => /ultra\s*wide/i.test(d.label) && !/front/i.test(d.label));
+      if (wide) {
+        stream.getTracks().forEach((t) => t.stop());
+        try { stream = await navigator.mediaDevices.getUserMedia(camConstraints(120, wide.deviceId)); }
+        catch { stream = await navigator.mediaDevices.getUserMedia(camConstraints(60, wide.deviceId)); }
+        S.hfov = 106; S.procW = '1280'; log(`wide lens on: ${wide.label}`);
+      } else {
+        log(`wide lens asked for but not found (cameras: ${devs.map((d) => d.label).join(', ') || 'none named'})`);
+        toast('This phone didn’t offer a wide lens to the app — using the normal camera at 3 m.', 6000);
+        S.lens = 'main'; S.hfov = 67; S.procW = '960';
+      }
+    } catch (e) { log(`couldn't switch to the wide lens: ${e.name || e.message}`); S.lens = 'main'; S.hfov = 67; S.procW = '960'; }
+    saveSettings(); sendConfig(); renderLensChip();
+  }
   const track = stream.getVideoTracks()[0];
   try { const st = track.getSettings(); log(`camera started ${st.width}×${st.height} @ ${st.frameRate} fps (${track.label || 'camera'})`); } catch { /* ignore */ }
   try {
@@ -766,8 +785,9 @@ function checkFraming(b) {
   if (!eng.w || !b) return;
   const issues = [];
   const dist = ballDistance(b), xf = b.x / eng.w;
-  if (b.d < 7) issues.push({ key: 'small', say: 'The ball is too small in the picture. Move the phone closer, about 3 metres from the ball.', text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about 3 m from the ball (ball should be 10 px or more).` });
-  if (b.d >= 7 && dist < 2.3) issues.push({ key: 'close', say: 'The phone is too close. Move it back to about 3 metres from the ball so your whole body fits in the picture.', text: `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit in the picture. Move it back to about 3 m.` });
+  const wide = S.lens === 'wide', want = wide ? 2 : 3;
+  if (b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
+  if (b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
   if ((eng.fps || 60) < 50) issues.push({ key: 'slow', say: 'The camera is running slowly. Use Safari, and bright light.', text: `The camera is only giving ${Math.round(eng.fps)} pictures a second (it needs 60) — fast shots will be missed. ${NOT_SAFARI ? 'Open the app in Safari instead of ' + NOT_SAFARI + '.' : 'This usually means the light is too dim.'}` });
   if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
   framingIssue = issues.map((i) => i.key).join(',');
@@ -795,7 +815,7 @@ function updateChips() {
     const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
     const measured = +S.ballDist > 0.5;
     const dist = measured ? +S.ballDist : (f * BALL.diameter) / eng.ball.d;
-    const tooClose = dist < 2.2, tooFar = dist > 4.2;
+    const wideL = S.lens === 'wide'; const tooClose = dist < (wideL ? 1.5 : 2.2), tooFar = dist > (wideL ? 2.8 : 4.2);
     cb.textContent = `Ball ${eng.ball.d.toFixed(0)} px · ${measured ? '' : 'about '}${dist.toFixed(1)} m away${measured ? ' (measured)' : ''}${tooClose ? ' — too close, move the phone back to 2.5–3.5 m' : tooFar ? ' — too far, move closer' : ''}`;
     cb.className = 'chip ' + (tooClose || tooFar ? 'bad' : 'ok');
   } else { cb.textContent = 'Ball: tap it'; cb.className = 'chip'; }
@@ -1502,7 +1522,7 @@ function reportText(d) {
   }
   if (lastSwing) L.push(lastSwing.ok ? `last swing: tips ${lastSwing.tips.map((t) => t.key).join(', ') || 'none'} · body seen in ${lastSwing.used} pictures · scale ${lastSwing.scaleFrom}` : `last swing: not analysed (${lastSwing.reason})`);
   L.push(`motion sensor ${motionOn ? `on · tilt from ready position ${tiltDeg.toFixed(1)}°` : 'off (tilt warnings from the camera only)'}`);
-  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? 'behind' : 'facing'}`);
+  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? 'behind' : 'facing'} · lens ${S.lens}`);
   if (eng.ball && eng.w) L.push(`ball ${eng.ball.d.toFixed(1)} px ≈ ${ballDistance(eng.ball).toFixed(1)} m away · ${Math.round((eng.ball.x / eng.w) * 100)}% across the picture${framingIssue ? ' · SET-UP PROBLEM: ' + framingIssue : ''}`);
   L.push('log (newest last):');
   for (const l of LOG.slice(-60)) L.push('  ' + l);
@@ -1602,6 +1622,16 @@ function renderDebugChip() { const c = $('#cDebug'); c.textContent = `Show what 
 $('#cDebug').addEventListener('click', () => { S.debug = S.debug === 'on' ? 'off' : 'on'; saveSettings(); renderDebugChip(); dbg = null; });
 renderDebugChip();
 function renderTeeChip() { const c = $('#cTee'); c.textContent = S.teeSpot ? '📍 Tee spot saved — tap to clear' : '📍 Tee spot: tap your ball to save it'; c.classList.toggle('on', !!S.teeSpot); }
+function renderLensChip() { const c = $('#cLens'); c.textContent = S.lens === 'wide' ? '🔭 Wide lens — phone 2 m away (tap for normal)' : '🔭 Normal lens — phone 3 m away (tap for wide, 2 m)'; c.className = 'chip' + (S.lens === 'wide' ? ' on' : ''); }
+$('#cLens').addEventListener('click', async () => {
+  S.lens = S.lens === 'wide' ? 'main' : 'wide'; S.camId = '';
+  if (S.lens === 'main') { S.hfov = 67; S.procW = '960'; }
+  S.teeSpot = null; saidFraming.clear();
+  saveSettings(); sendConfig(); renderLensChip(); renderTeeChip(); eng.ball = null;
+  log(`lens set to ${S.lens}`);
+  if (running) { await startCamera(); toast(S.lens === 'wide' ? 'Wide lens on — stand the phone about 2 m from the ball, then tap the ball' : 'Normal lens — stand the phone about 3 m from the ball, then tap the ball', 6000); }
+});
+renderLensChip();
 $('#cTee').addEventListener('click', () => { if (!S.teeSpot) { toast('Tap your ball on the picture to save your tee spot'); return; } S.teeSpot = null; saveSettings(); sendConfig(); renderTeeChip(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; log('tee spot cleared'); toast('Tee spot cleared — put the ball down and tap it to save a new one'); });
 renderTeeChip();
 
