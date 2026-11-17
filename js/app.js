@@ -1,10 +1,10 @@
 import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL } from './physics.js';
 import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
-import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
+import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.9.0';
+const VERSION = '1.9.1';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1251,7 +1251,7 @@ const P = { rec: null, bmps: [], cmp: null, cbmps: [], t: 0, playing: true, spee
 function stopPlayer() {
   cancelAnimationFrame(P.raf); P.raf = 0;
   for (const b of [...P.bmps, ...P.cbmps]) { try { b && b.close(); } catch { /* ignore */ } }
-  P.bmps = []; P.cbmps = []; P.rec = null; P.cmp = null; P.tool = null; P.pts = [];
+  P.bmps = []; P.cbmps = []; P.rec = null; P.cmp = null; P.ideal = null; P.tool = null; P.pts = [];
 }
 async function loadBitmaps(r) { return Promise.all(r.frames.map((f) => createImageBitmap(f.jpg).catch(() => null))); }
 
@@ -1278,7 +1278,7 @@ function updatePlayerText() {
   $('#swTitle').innerHTML = `${fmtWhen(r.ts)}${r.speed != null ? ` · ball speed ${(r.speed / MPH).toFixed(0)} mph · launch ${r.launch.toFixed(0)}°` : ''}${r.view === 'dtl' ? ' · filmed from behind' : ''}` +
     (r.ok ? ` · <b style="color:${scoreColour(r.score)}">Score ${r.score.toFixed(1)}/10</b>${r.metrics.tempo ? ` · tempo ${r.metrics.tempo.toFixed(1)}:1` : ''}` : ` · swing not checked: ${NOTES[r.reason] || 'body not seen'}`) +
     (P.cmp ? `<br><span style="color:#ff7a1a">Right: ${swingTitle(P.cmp)} · ${fmtWhen(P.cmp.ts)}${P.cmp.ok ? ` · score ${P.cmp.score.toFixed(1)}` : ''}</span>` : '');
-  $('#swTips2').innerHTML = r.ok ? ((r.tips.length ? r.tips.map((t) => `<div class="tip">${t.text}${t.drill ? `<div class="drill">🏌️ ${t.drill}</div>` : ''}</div>`).join('') : '<div class="tip good">No clear faults on this swing.</div>') + (r.good || []).map((g) => `<div class="tip good">✓ ${g}</div>`).join('')) : '';
+  $('#swTips2').innerHTML = r.ok ? ((r.tips.length ? r.tips.map((t) => `<div class="tip">${t.text}${IDEAL[t.key] && r.view !== 'dtl' ? ` <button class="btn showme${P.ideal === t.key ? ' on' : ''}" data-ideal="${t.key}">${P.ideal === t.key ? '✕ Hide model' : '👤 Show me'}</button>` : ''}${t.drill ? `<div class="drill">🏌️ ${t.drill}</div>` : ''}</div>`).join('') : '<div class="tip good">No clear faults on this swing.</div>') + (r.good || []).map((g) => `<div class="tip good">✓ ${g}</div>`).join('')) : '';
   $('#swMetrics2').textContent = metricsText(r);
 }
 function metricsText(r) {
@@ -1311,7 +1311,8 @@ function metricsText(r) {
 function sizePlayerCanvas() {
   const r = P.rec; if (!r) return;
   const c = $('#swCanvas');
-  c.width = r.w * (P.cmp ? 2 : 1) + (P.cmp ? 6 : 0); c.height = r.h;
+  const two = P.cmp || P.ideal;
+  c.width = r.w * (two ? 2 : 1) + (two ? 6 : 0); c.height = r.h;
 }
 
 function frameIdx(rec, t) { const fr = rec.frames; let i = 0; while (i + 1 < fr.length && fr[i + 1].t <= t + 1e-6) i++; return i; }
@@ -1389,6 +1390,7 @@ function drawPlayer() {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
   drawSwingPanel(ctx, r, P.bmps, P.t, 0);
   if (P.cmp) drawSwingPanel(ctx, P.cmp, P.cbmps, Math.max(P.cmp.frames[0].t, Math.min(P.cmp.frames[P.cmp.frames.length - 1].t, P.t)), r.w + 6, { colour: '#ff7a1a' });
+  if (P.ideal && !P.cmp) drawIdealPanel(ctx, r, r.w + 6);
   // user drawings (stored in the left panel's pixels)
   drawUserMarks(ctx);
   const span = r.frames[r.frames.length - 1].t - r.frames[0].t || 1;
@@ -1440,6 +1442,100 @@ $('#swDelete').addEventListener('click', async () => { if (!P.rec) return; const
 $('#swPlayer').addEventListener('pointerdown', () => { P.auto = false; });
 $('#swingsSheet').addEventListener('click', (e) => { if (e.target.id === 'swingsSheet' || e.target.hasAttribute('data-close')) stopPlayer(); });
 
+
+// ---- "Show me": a model figure next to the player, standing the way the tip asks for.
+// It is built from the player's own body in that picture, with only the faulty part moved.
+const IDEAL = {
+  'stance-wide': { ph: 'addr', what: 'Feet closer together' }, 'stance-narrow': { ph: 'addr', what: 'Feet wider apart' },
+  'ball-back': { ph: 'addr', what: 'Ball further forward' }, 'ball-forward': { ph: 'addr', what: 'Ball further back' },
+  'head-sway': { ph: 'top', what: 'Head stays over the ball' }, 'hip-sway': { ph: 'top', what: 'Hips stay centred — turn, don’t slide' },
+  'hang-back': { ph: 'imp', what: 'Hips forward at impact' }, 'head-forward': { ph: 'imp', what: 'Head stays behind the ball' },
+  'finish-back': { ph: 'fin', what: 'Weight on the front foot' },
+};
+function idealFigure(rec, key, L0) {
+  const A = rec.addrLm, m = rec.metrics, s = rec.s || 1, g = clubGroup(rec.club);
+  if (!A || !m || !L0) return null;
+  const L = L0.map((p) => (p ? [p[0], p[1], p[2] ?? 1] : p));
+  const moved = new Set(); let ball = null, note = '';
+  const stancePx = Math.abs(A[27][0] - A[28][0]) || 1, pxPerCm = m.stanceCm ? stancePx / m.stanceCm : 1;
+  const shift = (ids, dx, mark = true) => { for (const i of ids) if (L[i]) { L[i][0] += dx; if (mark && Math.abs(dx) > 2) moved.add(i); } };
+  const HEAD = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], ARMS = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+  const midx = (a, b) => (L[a][0] + L[b][0]) / 2, cm = (px) => Math.round(Math.abs(px) / pxPerCm);
+  if (key === 'stance-wide' || key === 'stance-narrow') {
+    const want = ((g.stance[0] + g.stance[1]) / 2) * (stancePx / Math.max(0.1, m.stanceRatio)), d = (want - stancePx) / 2;
+    const lead = (L[27][0] - L[28][0]) * s > 0 ? 27 : 28, trail = lead === 27 ? 28 : 27;
+    for (const [an, dir] of [[lead, s], [trail, -s]]) { shift([an, an + 2, an + 4], dir * d); shift([an - 2], dir * d * 0.5, false); }
+    note = `feet ${cm(want - stancePx)} cm ${want < stancePx ? 'closer' : 'wider'}`;
+  } else if (key === 'ball-back' || key === 'ball-forward') {
+    const lead = (A[27][0] - A[28][0]) * s > 0 ? A[27] : A[28], trail = lead === A[27] ? A[28] : A[27];
+    const want = (g.ballPos[0] + g.ballPos[1]) / 2;
+    ball = { x: trail[0] + (lead[0] - trail[0]) * want, y: rec.tee.y };
+    note = `ball ${cm(ball.x - rec.tee.x)} cm ${key === 'ball-back' ? 'forward' : 'back'}`;
+  } else if (key === 'head-sway' || key === 'head-forward') {
+    const d = A[0][0] - L[0][0]; shift(HEAD, d); shift([11, 12], d * 0.6, false); shift(ARMS, d * 0.6, false); note = `head ${cm(d)} cm back over the ball`;
+  } else if (key === 'hip-sway') {
+    const d = (A[23][0] + A[24][0]) / 2 - midx(23, 24); shift([23, 24], d); shift([25, 26], d * 0.5, false); note = `hips ${cm(d)} cm back to centre`;
+  } else if (key === 'hang-back') {
+    const d = (A[23][0] + A[24][0]) / 2 + s * 8 * pxPerCm - midx(23, 24); shift([23, 24], d); shift([25, 26], d * 0.5, false); shift([11, 12], d * 0.3, false); note = `hips ${cm(d)} cm towards the target`;
+  } else if (key === 'finish-back') {
+    const front = (L[27][0] - L[28][0]) * s > 0 ? L[27][0] : L[28][0], d = front - s * 4 * pxPerCm - midx(23, 24);
+    shift([23, 24], d); shift([11, 12], d * 0.9, false); shift(HEAD, d * 0.9, false); shift(ARMS, d * 0.9, false); note = `weight ${cm(d)} cm onto the front foot`;
+  } else return null;
+  return { L, moved, ball, note };
+}
+function drawIdealPanel(ctx, rec, x0) {
+  const key = P.ideal, def = IDEAL[key]; if (!def) return;
+  const you = lmAt(rec, P.t), fig = idealFigure(rec, key, you);
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, rec.w, rec.h); ctx.clip();
+  const bg = ctx.createLinearGradient(0, 0, 0, rec.h); bg.addColorStop(0, '#02121b'); bg.addColorStop(1, '#000307');
+  ctx.fillStyle = bg; ctx.fillRect(x0, 0, rec.w, rec.h);
+  ctx.strokeStyle = 'rgba(63,230,255,0.10)'; ctx.lineWidth = 1;
+  for (let x = 0; x < rec.w; x += 24) { ctx.beginPath(); ctx.moveTo(x0 + x, 0); ctx.lineTo(x0 + x, rec.h); ctx.stroke(); }
+  for (let y = 0; y < rec.h; y += 24) { ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + rec.w, y); ctx.stroke(); }
+  ctx.font = "700 13px 'Rajdhani', sans-serif"; ctx.textAlign = 'left';
+  if (!fig) { ctx.fillStyle = '#7fa8b6'; ctx.fillText('Body not seen clearly in this picture', x0 + 10, 40); ctx.restore(); return; }
+  const tw = Math.hypot((fig.L[11][0] + fig.L[12][0]) / 2 - (fig.L[23][0] + fig.L[24][0]) / 2, (fig.L[11][1] + fig.L[12][1]) / 2 - (fig.L[23][1] + fig.L[24][1]) / 2) || 60;
+  const limb = (L, a, b, w, col) => { const p = L[a], q = L[b]; if (!p || !q) return; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0 + p[0], p[1]); ctx.lineTo(x0 + q[0], q[1]); ctx.stroke(); };
+  // you, faint
+  if (you) for (const [a, b] of BONES) limb(you, a, b, 2, 'rgba(127,168,182,0.45)');
+  // the model: rounded limbs, the moved parts in orange
+  const col = (a, b) => (fig.moved.has(a) || fig.moved.has(b) ? '#ff7a1a' : '#e8fbff');
+  ctx.shadowColor = 'rgba(63,230,255,0.7)'; ctx.shadowBlur = 10;
+  const torso = [[11, 12], [23, 24], [11, 23], [12, 24]];
+  ctx.fillStyle = fig.moved.has(23) || fig.moved.has(11) ? 'rgba(255,122,26,0.35)' : 'rgba(232,251,255,0.28)';
+  ctx.beginPath(); ctx.moveTo(x0 + fig.L[11][0], fig.L[11][1]); ctx.lineTo(x0 + fig.L[12][0], fig.L[12][1]); ctx.lineTo(x0 + fig.L[24][0], fig.L[24][1]); ctx.lineTo(x0 + fig.L[23][0], fig.L[23][1]); ctx.closePath(); ctx.fill();
+  for (const [a, b] of torso) limb(fig.L, a, b, tw * 0.10, col(a, b));
+  for (const [a, b] of [[11, 13], [13, 15], [12, 14], [14, 16]]) limb(fig.L, a, b, tw * 0.13, col(a, b));
+  for (const [a, b] of [[23, 25], [25, 27], [24, 26], [26, 28]]) limb(fig.L, a, b, tw * 0.17, col(a, b));
+  for (const [a, b] of [[27, 31], [28, 32]]) limb(fig.L, a, b, tw * 0.12, col(a, b));
+  const hd = fig.L[0], hr = tw * 0.2; ctx.fillStyle = fig.moved.has(0) ? '#ff7a1a' : '#e8fbff'; ctx.beginPath(); ctx.arc(x0 + hd[0], hd[1] - hr * 0.2, hr, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  // ball: where it is, and where it should be
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x0 + rec.tee.x, rec.tee.y, 4, 0, Math.PI * 2); ctx.fill();
+  if (fig.ball) { ctx.strokeStyle = '#ff7a1a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x0 + fig.ball.x, fig.ball.y, 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0 + rec.tee.x, rec.tee.y - 12); ctx.lineTo(x0 + fig.ball.x, fig.ball.y - 12); ctx.stroke(); }
+  // arrow from where you are to where the model is, for the first moved part
+  const k = [0, 23, 27, 28].find((i) => fig.moved.has(i));
+  if (k != null && you && you[k]) { const a = you[k], b = fig.L[k], dir = Math.sign(b[0] - a[0]) || 1, y = a[1] - (k === 0 ? tw * 0.45 : 0);
+    ctx.strokeStyle = '#ff7a1a'; ctx.fillStyle = '#ff7a1a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x0 + a[0], y); ctx.lineTo(x0 + b[0], y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0 + b[0] + dir * 7, y); ctx.lineTo(x0 + b[0] - dir * 3, y - 6); ctx.lineTo(x0 + b[0] - dir * 3, y + 6); ctx.closePath(); ctx.fill(); }
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x0, 0, rec.w, 22); ctx.fillStyle = '#ff7a1a'; ctx.fillText(`MODEL · ${def.what}${fig.note ? ' — ' + fig.note : ''}`, x0 + 6, 15);
+  ctx.fillStyle = 'rgba(127,168,182,0.9)'; ctx.fillText('grey = you · white = model · orange = what to change', x0 + 6, rec.h - 8);
+  ctx.restore();
+}
+$('#swTips2').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-ideal]'); if (!b || !P.rec) return;
+  const key = b.dataset.ideal;
+  if (P.ideal === key) { P.ideal = null; }
+  else {
+    P.ideal = key;
+    if (P.cmp) { for (const x of P.cbmps) { try { x && x.close(); } catch { /* */ } } P.cmp = null; P.cbmps = []; $('#swCompare').textContent = '⚖︎ Compare'; }
+    const t = P.rec.phases && P.rec.phases[IDEAL[key].ph]; pausePlayer(); P.t = t != null ? t : 0;
+    $('#swCanvas').scrollIntoView({ block: 'nearest' });
+  }
+  sizePlayerCanvas(); updatePlayerText();
+});
+
 // ---- best swing
 $('#swBest').addEventListener('click', async () => {
   if (!P.rec) return;
@@ -1486,7 +1582,7 @@ $('#cmpList').addEventListener('click', async (e) => {
   const row = e.target.closest('[data-cmp]'); if (!row) return;
   $('#cmpPick').hidden = true;
   const other = await getSwing(+row.dataset.cmp); if (!other) return;
-  P.cmp = other; P.cbmps = await loadBitmaps(other);
+  P.cmp = other; P.ideal = null; P.cbmps = await loadBitmaps(other);
   sizePlayerCanvas(); updatePlayerText(); $('#swCompare').textContent = '✕ End compare';
   P.t = Math.max(P.rec.frames[0].t, other.frames[0].t); P.playing = true; $('#swPlay').textContent = '❚❚ Pause';
 });
