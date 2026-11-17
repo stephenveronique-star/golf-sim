@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.5';
+const VERSION = '1.8.6';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -711,6 +711,12 @@ setupC.addEventListener('click', async (e) => {
   const b = await setBall(px, py);
   log(`tap at ${px.toFixed(0)},${py.toFixed(0)} → ${b ? 'ball found' : 'NO ball found'}`);
   if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); flashTap(px, py, false); return; }
+  if (b.d < 4.5 || b.d > eng.w * 0.022) {
+    // far too small or too big to be a golf ball at a sensible distance: don't save it
+    log(`tap found something ${b.d.toFixed(1)} px wide — not saved as the ball`);
+    toast(b.d < 4.5 ? 'That looks too small to be the ball — the phone is too far away, or you tapped something else. Move the phone to about 3 m and tap the ball again.' : 'That looks too big to be the ball — you may have tapped a shoe or the club, or the phone is too close. Stand about 3 m away and tap the ball again.', 7000);
+    flashTap(px, py, false); worker.postMessage({ cmd: 'reset' }); eng.state = 'idle'; eng.ball = null; updateReady(); return;
+  }
   flashTap(px, py, true);
   // remember the tee spot: from now on the app only looks for a ball here
   S.teeSpot = { x: b.x / eng.w, y: b.y / eng.h }; saveSettings(); sendConfig(); renderTeeChip();
@@ -747,6 +753,8 @@ function updateReady() {
 // The two set-up mistakes that spoil readings: the ball tiny in the picture
 // (phone too far away) and the ball near the edge (the swing goes out of view).
 let lastFramingWarn = 0, framingIssue = '';
+// other iPhone browsers hold the camera to 30 pictures a second and keep their own separate settings
+const NOT_SAFARI = /EdgiOS/.test(navigator.userAgent) ? 'Edge' : /CriOS/.test(navigator.userAgent) ? 'Chrome' : /FxiOS/.test(navigator.userAgent) ? 'Firefox' : '';
 let movedTimes = [];
 function ballDistance(b) {
   if (+S.ballDist > 0.5) return +S.ballDist;
@@ -758,6 +766,8 @@ function checkFraming(b) {
   const issues = [];
   const dist = ballDistance(b), xf = b.x / eng.w;
   if (b.d < 7) issues.push({ key: 'small', say: 'The ball is too small in the picture. Move the phone closer, about 3 metres from the ball.', text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about 3 m from the ball (ball should be 10 px or more).` });
+  if (b.d >= 7 && dist < 2.3) issues.push({ key: 'close', say: 'The phone is too close. Move it back to about 3 metres from the ball so your whole body fits in the picture.', text: `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit in the picture. Move it back to about 3 m.` });
+  if ((eng.fps || 60) < 50) issues.push({ key: 'slow', say: 'The camera is running slowly. Use Safari, and bright light.', text: `The camera is only giving ${Math.round(eng.fps)} pictures a second (it needs 60) — fast shots will be missed. ${NOT_SAFARI ? 'Open the app in Safari instead of ' + NOT_SAFARI + '.' : 'This usually means the light is too dim.'}` });
   if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
   framingIssue = issues.map((i) => i.key).join(',');
   if (!issues.length) return;
@@ -1766,6 +1776,7 @@ renderClubs();
 applyUnits();
 $('#startNote').textContent = `Version ${VERSION} · works best in Safari on iPhone, in landscape, outdoors in daylight.`;
 $('#brandVer').textContent = 'v' + VERSION;
+if (NOT_SAFARI) { $('#startNote').innerHTML = `<b style="color:var(--orange)">You’re in ${NOT_SAFARI}. Please open this app in Safari</b> — it gives the camera 60 pictures a second, and your settings and saved swings are there. Version ${VERSION}.`; log(`opened in ${NOT_SAFARI}, not Safari`); }
 showSection('drive');
 // the range is drawn on a canvas: redraw once the Neon Grid fonts have loaded
 try { document.fonts.ready.then(() => range.draw(performance.now() + 1e7)); } catch { /* old browser */ }
