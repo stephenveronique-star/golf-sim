@@ -54,7 +54,7 @@ function processSource(src, sw, sh, t) {
   }
   ctx.drawImage(src, 0, 0, W, H);
   const d = ctx.getImageData(0, 0, W, H).data;
-  for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = ((d[i] * 2 + d[i + 1] + d[i + 2] * 2) * 51) >> 8;
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = ((d[i] * 3 + d[i + 1] * 2) * 51) >> 8;
   engine.pushFrame(gray, W, H, t);
   keepSnap(gray, W, H, t);
   procMs = procMs * 0.9 + (performance.now() - t0) * 0.1;

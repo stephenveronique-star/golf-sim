@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.8';
+const VERSION = '1.8.9';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -283,7 +283,10 @@ function makeWorker() {
 }
 let setBallSeq = 0;
 const pending = new Map();
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: +S.ballDist || 0, teeSpot: S.teeSpot || null } }); }
+// In dim light the ball looks smaller than it is, so its size can't be trusted for distance.
+function isDim() { return (eng.fps || 60) < 50; }
+function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : 0; }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null } }); }
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
@@ -466,6 +469,10 @@ async function startCamera() {
     } catch (e) { log(`couldn't switch to the wide lens: ${e.name || e.message}`); S.lens = 'main'; S.hfov = 67; S.procW = '960'; }
     saveSettings(); sendConfig(); renderLensChip();
   }
+  try {
+    await stream.getVideoTracks()[0].applyConstraints({ frameRate: { min: 55, ideal: 60 } });
+    log('asked the camera to hold 60 pictures a second: accepted');
+  } catch (e) { log(`asked the camera to hold 60 pictures a second: refused (${e.name || e.message})`); }
   const track = stream.getVideoTracks()[0];
   try { const st = track.getSettings(); log(`camera started ${st.width}×${st.height} @ ${st.frameRate} fps (${track.label || 'camera'})`); } catch { /* ignore */ }
   try {
@@ -604,7 +611,8 @@ function grabFrame(now, meta) {
   let buf = freeBufs.pop();
   if (!buf || buf.byteLength !== W * H) buf = new ArrayBuffer(W * H);
   const g = new Uint8Array(buf);
-  for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = ((d[i] * 2 + d[i + 1] + d[i + 2] * 2) * 51) >> 8;
+  // red + green only: a yellow ball then stands out from the turf as strongly as a white one
+  for (let i = 0, j = 0; j < g.length; i += 4, j++) g[j] = ((d[i] * 3 + d[i + 1] * 2) * 51) >> 8;
   worker.postMessage({ cmd: 'gray', buf, w: W, h: H, t, prepMs: performance.now() - t0 }, [buf]);
 }
 
@@ -730,10 +738,10 @@ setupC.addEventListener('click', async (e) => {
   const b = await setBall(px, py);
   log(`tap at ${px.toFixed(0)},${py.toFixed(0)} → ${b ? 'ball found' : 'NO ball found'}`);
   if (!b) { toast('Couldn’t find a ball there — tap right on the ball. It needs to look brighter than the ground around it.'); flashTap(px, py, false); return; }
-  if (b.d < 4.5 || b.d > eng.w * 0.022) {
+  if (b.d < 3 || b.d > eng.w * 0.022) {
     // far too small or too big to be a golf ball at a sensible distance: don't save it
     log(`tap found something ${b.d.toFixed(1)} px wide — not saved as the ball`);
-    toast(b.d < 4.5 ? 'That looks too small to be the ball — the phone is too far away, or you tapped something else. Move the phone to about 3 m and tap the ball again.' : 'That looks too big to be the ball — you may have tapped a shoe or the club, or the phone is too close. Stand about 3 m away and tap the ball again.', 7000);
+    toast(b.d < 3 ? 'That looks too small to be the ball — the phone is too far away, or you tapped something else. Move the phone to about 3 m and tap the ball again.' : 'That looks too big to be the ball — you may have tapped a shoe or the club, or the phone is too close. Stand about 3 m away and tap the ball again.', 7000);
     flashTap(px, py, false); worker.postMessage({ cmd: 'reset' }); eng.state = 'idle'; eng.ball = null; updateReady(); return;
   }
   flashTap(px, py, true);
@@ -777,18 +785,19 @@ const NOT_SAFARI = /EdgiOS/.test(navigator.userAgent) ? 'Edge' : /CriOS/.test(na
 let movedTimes = [];
 const saidFraming = new Set();
 function ballDistance(b) {
-  if (+S.ballDist > 0.5) return +S.ballDist;
+  if (usedBallDist()) return usedBallDist();
   const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
   return (f * BALL.diameter) / b.d;
 }
 function checkFraming(b) {
   if (!eng.w || !b) return;
+  sendConfig(); // the distance used for speed depends on the light
   const issues = [];
   const dist = ballDistance(b), xf = b.x / eng.w;
   const wide = S.lens === 'wide', want = wide ? 2 : 3;
-  if (b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
-  if (b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
-  if ((eng.fps || 60) < 50) issues.push({ key: 'slow', say: 'The camera is running slowly. Use Safari, and bright light.', text: `The camera is only giving ${Math.round(eng.fps)} pictures a second (it needs 60) — fast shots will be missed. ${NOT_SAFARI ? 'Open the app in Safari instead of ' + NOT_SAFARI + '.' : 'This usually means the light is too dim.'}` });
+  if (!isDim() && !(+S.ballDist > 0.5) && b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
+  if (!isDim() && !(+S.ballDist > 0.5) && b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
+  if (isDim()) issues.push({ key: 'slow', say: 'It is too dark. The camera has slowed down, so shots will be missed. Use it in daylight or under bright lights.', text: `Too dark: the camera has slowed to ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. Use it in daylight or under bright lights.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
   if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
   framingIssue = issues.map((i) => i.key).join(',');
   if (!issues.length) return;
