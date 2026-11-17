@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.6';
+const VERSION = '1.8.7';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -344,8 +344,8 @@ function onEngineEvent(ev) {
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
     checkFraming(ev.ball);
     // remember the phone's position once your hand is off it
-    tiltDeg = 0; gRef = gNow ? { ...gNow } : null;
-    setTimeout(() => { if (gNow && eng.state === 'armed') { gRef = { ...gNow }; tiltDeg = 0; updateReady(); checkLevel(); } }, 1500);
+    tiltDeg = 0; tiltSince = 0; tiltHeld = false; gRef = gNow ? { ...gNow } : null;
+    setTimeout(() => { if (gNow && eng.state === 'armed') { gRef = { ...gNow }; tiltDeg = 0; tiltSince = 0; tiltHeld = false; updateReady(); checkLevel(); } }, 1500);
     setStatus('ready', 'Ready — hit away');
     $('#setupMsg').textContent = ev.how === 'tap' ? 'Ready — hit away' : 'Found the ball — ready, hit away';
     updateReady();
@@ -385,7 +385,7 @@ function onEngineEvent(ev) {
     eng.state = 'waiting'; phoneMovedFromPicture();
     log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
     movedTimes = movedTimes.filter((t) => performance.now() - t < 120000); movedTimes.push(performance.now());
-    if (movedTimes.length >= 3) { toast('The phone keeps moving — it looks hand-held. The app compares pictures to find the ball, so even a small wobble looks like movement. Put the phone on a stand, or prop it against something solid.', 9000); say('The phone keeps moving. Please put it on a stand.'); movedTimes = []; }
+    if (movedTimes.length >= 3) { toast('The phone keeps moving — it looks hand-held. The app compares pictures to find the ball, so even a small wobble looks like movement. Put the phone on a stand, or prop it against something solid.', 9000); movedTimes = []; }
     else toast('The phone moved, so that wasn’t counted as a shot. Finding the ball again — keep the phone still.', 5000);
   } else if (ev.type === 'nudged') {
     eng.ball = ev.ball;
@@ -737,7 +737,7 @@ let wasPortrait = null;
 function updateReady() {
   const portrait = running && video.videoHeight > video.videoWidth;
   if (portrait !== wasPortrait && running && video.videoWidth) { log(portrait ? 'phone is upright (portrait) — waiting for landscape' : 'phone is sideways (landscape)'); wasPortrait = portrait; }
-  const tilted = running && !portrait && gRef && tiltDeg >= TILT_WARN;
+  const tilted = running && !portrait && gRef && tiltHeld;
   const moved = running && !portrait && performance.now() < phoneMovedUntil;
   const st = !running ? 'off' : portrait ? 'turn' : tilted ? 'tilt' : moved ? 'moved' : eng.state === 'armed' ? 'ready' : eng.state === 'waiting' ? 'tee' : 'look';
   document.body.dataset.ready = st;
@@ -756,6 +756,7 @@ let lastFramingWarn = 0, framingIssue = '';
 // other iPhone browsers hold the camera to 30 pictures a second and keep their own separate settings
 const NOT_SAFARI = /EdgiOS/.test(navigator.userAgent) ? 'Edge' : /CriOS/.test(navigator.userAgent) ? 'Chrome' : /FxiOS/.test(navigator.userAgent) ? 'Firefox' : '';
 let movedTimes = [];
+const saidFraming = new Set();
 function ballDistance(b) {
   if (+S.ballDist > 0.5) return +S.ballDist;
   const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
@@ -775,7 +776,9 @@ function checkFraming(b) {
   if (performance.now() - lastFramingWarn < 60000) return; // once a minute is enough
   lastFramingWarn = performance.now();
   toast(issues.map((i) => i.text).join('\n'), 9000);
-  setTimeout(() => say(issues[0].say), 1600);
+  // say each set-up problem out loud once only; after that it's on screen
+  const fresh = issues.find((i) => !saidFraming.has(i.key));
+  if (fresh) { saidFraming.add(fresh.key); setTimeout(() => say(fresh.say), 1600); }
 }
 
 function updateChips() {
@@ -800,7 +803,7 @@ function updateChips() {
 
 // Phone position watch (motion sensor). When the ball is found we remember
 // which way gravity points; if the phone then tilts away from that, we say so.
-let motionOn = false, motionAsked = false, gRef = null, gNow = null, tiltDeg = 0, tiltSince = 0;
+let motionOn = false, motionAsked = false, gRef = null, gNow = null, tiltDeg = 0, tiltSince = 0, tiltHeld = false;
 async function startMotion(fromTap) {
   if (motionOn) return true;
   try {
@@ -821,9 +824,11 @@ async function startMotion(fromTap) {
     if (gRef) {
       const dot = gRef.x * gNow.x + gRef.y * gNow.y + gRef.z * gNow.z, n = Math.hypot(gRef.x, gRef.y, gRef.z) * Math.hypot(gNow.x, gNow.y, gNow.z);
       const deg = n ? (Math.acos(Math.max(-1, Math.min(1, dot / n))) * 180) / Math.PI : 0;
-      const was = tiltDeg >= TILT_WARN; tiltDeg = deg;
-      if (deg >= TILT_WARN && !was) { tiltSince = now; onPhoneTilted(deg); }
-      if ((deg >= TILT_WARN) !== was) updateReady();
+      // only call it tilted once it has stayed tilted for 3 seconds (a tap or a gust is not a problem)
+      tiltDeg = deg;
+      if (deg >= TILT_WARN) { if (!tiltSince) tiltSince = now; } else tiltSince = 0;
+      const held = !!tiltSince && now - tiltSince > 3000;
+      if (held !== tiltHeld) { tiltHeld = held; if (held) onPhoneTilted(deg); updateReady(); }
     }
     const el = $('#cLevel');
     if (Math.abs(g.x) < Math.abs(g.y)) { el.textContent = 'Turn the phone to landscape'; el.className = 'chip warn'; return; }
@@ -835,7 +840,7 @@ async function startMotion(fromTap) {
   return true;
 }
 const TILT_WARN = 2.5; // degrees away from where it was when the ball was found
-let lastMoveSay = 0, phoneMovedUntil = 0;
+let lastMoveSay = -1e9, phoneMovedUntil = 0;
 let lastTiltLog = 0, lastLevelWarn = 0;
 // is the phone level (not leaning sideways)? A lean adds straight onto the launch angle.
 function checkLevel() {
@@ -850,12 +855,12 @@ function checkLevel() {
 }
 function onPhoneTilted(deg) {
   if (performance.now() - lastTiltLog > 10000) { lastTiltLog = performance.now(); log(`PHONE TILTED ${deg.toFixed(1)}° from where it was when the ball was found`); }
-  if (performance.now() - lastMoveSay > 8000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone has moved. Put it back, or keep it still.'); }
+  if (performance.now() - lastMoveSay > 120000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone has moved. Put it back, or keep it still.'); }
 }
 function phoneMovedFromPicture() {
   phoneMovedUntil = performance.now() + 4000; updateReady();
   setTimeout(updateReady, 4100);
-  if (performance.now() - lastMoveSay > 8000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone moved. Keep it still.'); }
+  if (performance.now() - lastMoveSay > 120000) { lastMoveSay = performance.now(); beep(300, 0.2); say('The phone moved. Keep it still.'); }
 }
 $('#cLevel').addEventListener('click', () => startMotion(true));
 
