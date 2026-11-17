@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.9.1';
+const VERSION = '1.9.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1023,6 +1023,7 @@ const NOTES = {
   backswing: 'Couldn’t follow that swing clearly.',
   address: 'Couldn’t see your set-up clearly before the swing.',
   unclear: 'Couldn’t see your body clearly enough.',
+  imported: 'Added video — for watching and comparing, not scored.',
   edge: 'Your hands went out of the picture at the top of your swing — move the phone back a little, or so the ball is about a third of the way in from the edge.',
   load: 'Swing tips need internet the first time to download (about 20 MB).',
 };
@@ -1151,7 +1152,7 @@ async function storeSwing(rec, res, frames, pics, ev, tImp) {
 }
 
 const fmtWhen = (ts) => { const d = new Date(ts); const today = new Date().toDateString() === d.toDateString(); return (today ? 'Today ' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ') + d.toTimeString().slice(0, 5); };
-const swingTitle = (r) => `${clubById(r.club).name}${r.swingOnly ? ' · swing only' : r.carry != null ? ` · ${fmtDist(r.carry)} ${dUnit()}` : ''}`;
+const swingTitle = (r) => r.name ? `🎞 ${r.name}` : `${clubById(r.club).name}${r.swingOnly ? ' · swing only' : r.carry != null ? ` · ${fmtDist(r.carry)} ${dUnit()}` : ''}`;
 
 // ---- training goals
 const GOALS = {
@@ -1182,7 +1183,7 @@ async function openSwings(id, opts = {}) {
   stopPlayer();
   P.auto = !!opts.auto; P.openedAt = performance.now(); clearTimeout(P.closeTimer);
   if (id) return openPlayer(id);
-  $('#swPlayer').hidden = true; $('#swSeq').hidden = true; $('#swList').hidden = false; $('#swHead').textContent = 'My swings';
+  $('#swPlayer').hidden = true; $('#swSeq').hidden = true; $('#swImport').hidden = true; $('#swAddRow').hidden = false; $('#swList').hidden = false; $('#swHead').textContent = 'My swings';
   let list = [];
   try { list = await listSwings(); } catch (e) { $('#swList').innerHTML = `<div class="empty">Couldn’t open saved swings (${e.message || e}).</div>`; return; }
   if (!list.length) { $('#swList').innerHTML = '<div class="empty">No swings saved yet. Every shot the app reads is saved here with a slow-motion replay and your swing check (keep “Swing tips” on in Settings).</div>'; return; }
@@ -1258,7 +1259,7 @@ async function loadBitmaps(r) { return Promise.all(r.frames.map((f) => createIma
 async function openPlayer(id) {
   const auto = P.auto;
   stopPlayer(); P.auto = auto;
-  $('#swList').hidden = true; $('#swSeq').hidden = true; $('#swPlayer').hidden = false;
+  $('#swList').hidden = true; $('#swSeq').hidden = true; $('#swImport').hidden = true; $('#swAddRow').hidden = true; $('#swPlayer').hidden = false;
   const r = await getSwing(id);
   if (!r) { $('#swTitle').textContent = 'That swing is no longer saved.'; return; }
   P.rec = r; P.t = r.frames[0].t; P.playing = true; P.last = performance.now(); P.hold = 0;
@@ -1312,7 +1313,7 @@ function sizePlayerCanvas() {
   const r = P.rec; if (!r) return;
   const c = $('#swCanvas');
   const two = P.cmp || P.ideal;
-  c.width = r.w * (two ? 2 : 1) + (two ? 6 : 0); c.height = r.h;
+  c.width = r.w + (two ? 6 + (P.cmp ? Math.round((P.cmp.w * r.h) / P.cmp.h) : r.w) : 0); c.height = r.h;
 }
 
 function frameIdx(rec, t) { const fr = rec.frames; let i = 0; while (i + 1 < fr.length && fr[i + 1].t <= t + 1e-6) i++; return i; }
@@ -1389,7 +1390,10 @@ function drawPlayer() {
   const c = $('#swCanvas'), ctx = c.getContext('2d');
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
   drawSwingPanel(ctx, r, P.bmps, P.t, 0);
-  if (P.cmp) drawSwingPanel(ctx, P.cmp, P.cbmps, Math.max(P.cmp.frames[0].t, Math.min(P.cmp.frames[P.cmp.frames.length - 1].t, P.t)), r.w + 6, { colour: '#ff7a1a' });
+  if (P.cmp) { // the other swing, scaled to the same height (it may be an upright video)
+    const k = r.h / P.cmp.h; ctx.save(); ctx.translate(r.w + 6, 0); ctx.scale(k, k);
+    drawSwingPanel(ctx, P.cmp, P.cbmps, Math.max(P.cmp.frames[0].t, Math.min(P.cmp.frames[P.cmp.frames.length - 1].t, P.t)), 0, { colour: '#ff7a1a' }); ctx.restore();
+  }
   if (P.ideal && !P.cmp) drawIdealPanel(ctx, r, r.w + 6);
   // user drawings (stored in the left panel's pixels)
   drawUserMarks(ctx);
@@ -1421,7 +1425,7 @@ function playerLoop(now) {
     else {
       P.t += dt * P.speed;
       const end = r.frames[r.frames.length - 1].t;
-      if (P.t > end) { P.t = r.frames[0].t; P.hold = 0.8; }
+      if (P.t > end) { if (P.onEnd) { const f = P.onEnd; P.onEnd = null; P.t = end; pausePlayer(); f(); } else { P.t = r.frames[0].t; P.hold = 0.8; } }
     }
   }
   drawPlayer();
@@ -1536,6 +1540,80 @@ $('#swTips2').addEventListener('click', (e) => {
   sizePlayerCanvas(); updatePlayerText();
 });
 
+// ---- export the replay as a video file (slow motion, with the outline and angles as shown)
+$('#swVideo').addEventListener('click', async () => {
+  const r = P.rec, c = $('#swCanvas'); if (!r || P.onEnd) return;
+  const mime = window.MediaRecorder && ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
+  if (!c.captureStream || !mime) { toast('This browser can’t make a video file. Use the iPhone’s screen recording instead: swipe down from the top-right corner, tap the ⏺ button, then play the swing.', 9000); return; }
+  setTool(null);
+  const stream = c.captureStream(30), chunks = [];
+  let mr;
+  try { mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4000000 }); } catch (e) { toast('Couldn’t start the video recorder: ' + (e.message || e)); return; }
+  mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const done = new Promise((res) => { mr.onstop = res; });
+  $('#swVideo').textContent = '⏺ Making video…';
+  P.t = r.frames[0].t; P.hold = 0.4; P.playing = true; $('#swPlay').textContent = '❚❚ Pause';
+  mr.start(250);
+  await new Promise((res) => { P.onEnd = res; });
+  await sleep(500); // hold the last picture for a moment
+  mr.stop(); await done; stream.getTracks().forEach((t) => t.stop());
+  $('#swVideo').textContent = '🎬 Video';
+  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const blob = new Blob(chunks, { type: mime.split(';')[0] });
+  if (blob.size < 2000) { log(`video export failed: ${blob.size} bytes (${mime})`); toast('The video came out empty. Use the iPhone’s screen recording instead (Control Centre › ⏺).', 8000); return; }
+  log(`video export: ${(blob.size / 1e6).toFixed(1)} MB ${mime}`);
+  P.seqFile = new File([blob], `swing-${clubById(r.club).id}-${new Date(r.ts).toISOString().slice(0, 10)}.${ext}`, { type: blob.type });
+  $('#seqImg').hidden = true; const v = $('#seqVid'); v.hidden = false; v.src = URL.createObjectURL(blob);
+  $('#seqNote').textContent = 'Your swing in slow motion. Tap Share / Save to send it to your coach (WhatsApp, Messages, email) or save it to Photos.';
+  $('#swPlayer').hidden = true; $('#swSeq').hidden = false;
+});
+
+// ---- add a video of another player (filmed now, or picked from Photos) to watch and compare
+$('#swAdd').addEventListener('click', () => { $('#swFile').value = ''; $('#swFile').click(); });
+$('#swFile').addEventListener('change', (e) => {
+  const f = e.target.files && e.target.files[0]; if (!f) return;
+  const v = $('#impVid'); v.src = URL.createObjectURL(f); v.load();
+  $('#impName').value = ''; $('#impMsg').textContent = '';
+  $('#swList').hidden = true; $('#swPlayer').hidden = true; $('#swSeq').hidden = true; $('#swImport').hidden = false; $('#swHead').textContent = 'Add a video';
+  log(`video picked to add: ${(f.size / 1e6).toFixed(1)} MB ${f.type}`);
+});
+$('#impCancel').addEventListener('click', () => { $('#impVid').pause(); $('#swImport').hidden = true; openSwings(); });
+$('#impSave').addEventListener('click', async () => {
+  const v = $('#impVid'), msg = $('#impMsg');
+  if (!v.videoWidth) { msg.textContent = 'The video hasn’t loaded yet — wait a moment and try again.'; return; }
+  v.pause();
+  const tImp = v.currentTime, name = ($('#impName').value || 'Other player').trim().slice(0, 30);
+  const W = v.videoWidth >= v.videoHeight ? 480 : 300, H = Math.round((v.videoHeight * W) / v.videoWidth);
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d');
+  const seek = (t) => new Promise((res) => { const done = () => { v.removeEventListener('seeked', done); res(); }; v.addEventListener('seeked', done); v.currentTime = t; setTimeout(done, 1500); });
+  const t0 = Math.max(0, tImp - 2.3), t1 = Math.min(v.duration || tImp, tImp + 1.05), pics = [], out = [];
+  $('#impSave').disabled = true;
+  try {
+    for (let t = t0; t <= t1; t += 0.05) {
+      msg.textContent = `Reading the video… ${Math.round(((t - t0) / (t1 - t0 || 1)) * 100)}%`;
+      await seek(t); ctx.drawImage(v, 0, 0, W, H);
+      pics.push({ t, bmp: await createImageBitmap(c) });
+      out.push({ t: +(t - tImp).toFixed(3), jpg: await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.7)), lm: null });
+    }
+    if (out.length < 5) { msg.textContent = 'Couldn’t read that video. Try a different one.'; return; }
+    msg.textContent = 'Finding the body outline…';
+    try {
+      swingChecking = true;
+      const { frames } = await swingCap.analyse(pics, W, H);
+      for (const f of frames) { const o = out[pics.findIndex((p) => p.t === f.t)]; if (o && f.lm) o.lm = f.lm.map((q) => [Math.round(q.x), Math.round(q.y), +q.v.toFixed(2)]); }
+    } catch (err) { log(`added video: no body outline (${err.message || err})`); } finally { swingChecking = false; }
+    for (const p of pics) { try { p.bmp.close(); } catch { /* */ } }
+    const id = Date.now();
+    await saveSwing({ id, ts: id, session, club: S.club, name, imported: true, swingOnly: true, carry: null, total: null, speed: null, launch: null,
+      view: 'face', ok: false, reason: 'imported', score: null, tips: [], good: [], metrics: null, phases: null, addrLm: null, s: 1,
+      tee: { x: -99, y: -99 }, w: W, h: H, frames: out, best: false, drawings: [] });
+    log(`added video saved as "${name}" (${out.length} pictures, ${W}×${H}, outline in ${out.filter((o) => o.lm).length})`);
+    $('#swImport').hidden = true; openSwings(id);
+    toast('Saved. Open one of your own swings and tap ⚖︎ Compare to put it side by side.', 6000);
+  } catch (err) { log(`ERROR adding video: ${err.message || err}`); msg.textContent = 'Something went wrong reading that video: ' + (err.message || err); }
+  finally { $('#impSave').disabled = false; }
+});
+
 // ---- best swing
 $('#swBest').addEventListener('click', async () => {
   if (!P.rec) return;
@@ -1607,14 +1685,15 @@ $('#swSeqBtn').addEventListener('click', async () => {
   ctx.fillText(`Golf Sim · ${swingTitle(r)} · ${fmtWhen(r.ts)}${r.ok ? ` · score ${r.score.toFixed(1)}/10${r.metrics.tempo ? ` · tempo ${r.metrics.tempo.toFixed(1)}:1` : ''}` : ''}`, 10, rows * th + 27);
   const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', 0.88));
   P.seqFile = new File([blob], `swing-sequence-${r.id}.jpg`, { type: 'image/jpeg' });
+  $('#seqVid').hidden = true; $('#seqImg').hidden = false; $('#seqNote').textContent = 'Your swing in 8 positions. Share it to WhatsApp or your coach, or press and hold the picture to save it to Photos.';
   $('#seqImg').src = URL.createObjectURL(blob);
   $('#swPlayer').hidden = true; $('#swSeq').hidden = false;
 });
 $('#seqShare').addEventListener('click', async () => {
   if (!P.seqFile) return;
   try {
-    if (navigator.canShare && navigator.canShare({ files: [P.seqFile] })) { await navigator.share({ files: [P.seqFile], title: 'My swing sequence' }); return; }
-    toast('Press and hold the picture and choose Save to Photos');
+    if (navigator.canShare && navigator.canShare({ files: [P.seqFile] })) { await navigator.share({ files: [P.seqFile], title: 'My swing' }); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(P.seqFile); a.download = P.seqFile.name; document.body.appendChild(a); a.click(); a.remove();
   } catch (e) { if (e.name !== 'AbortError') toast('Press and hold the picture and choose Save to Photos'); }
 });
 

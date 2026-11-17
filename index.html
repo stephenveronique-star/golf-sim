@@ -602,7 +602,15 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
 <div class="overlay" id="swingsSheet"><div class="sheet diag swings">
   <button class="btn ghost close" data-close>Close</button>
   <h2 id="swHead">My swings</h2>
+  <div class="ctrl" id="swAddRow"><button class="btn" id="swAdd">＋ Add a video of another player</button><input type="file" id="swFile" accept="video/*" hidden></div>
   <div id="swList"></div>
+  <div id="swImport" hidden>
+    <p class="kv">Film the player <b>from in front, whole body in the picture</b>, holding the phone still — or pick a video from Photos. Then <b>move the video to the moment the club hits the ball</b> and tap Save.</p>
+    <video id="impVid" controls playsinline muted preload="auto" style="width:100%;max-height:46vh;background:#000;border:1px solid var(--line);border-radius:3px"></video>
+    <div class="field"><label>Name</label><input id="impName" type="text" maxlength="30" placeholder="e.g. Club pro" style="width:200px"></div>
+    <div class="ctrl"><button class="btn primary" id="impSave">This is impact — save</button><button class="btn ghost" id="impCancel">Cancel</button></div>
+    <p class="kv" id="impMsg"></p>
+  </div>
   <div id="swPlayer" hidden>
     <button class="btn ghost" id="swBack">‹ All swings</button>
     <p class="kv" id="swTitle"></p>
@@ -622,6 +630,7 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
       <button class="btn tog" id="swAngle">∠ Angle</button>
       <button class="btn ghost" id="swClear">Clear drawings</button>
       <span class="spacer"></span>
+      <button class="btn" id="swVideo">🎬 Video</button>
       <button class="btn" id="swSeqBtn">▦ Sequence</button>
       <button class="btn" id="swCompare">⚖︎ Compare</button>
       <button class="btn" id="swBest">☆ Mark as best</button>
@@ -634,8 +643,8 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
   </div>
   <div id="swSeq" hidden>
     <button class="btn ghost" id="seqBack">‹ Back to the replay</button>
-    <p class="kv">Your swing in 8 positions. Share it to WhatsApp or your coach, or press and hold the picture to save it to Photos.</p>
-    <img id="seqImg" alt="Swing sequence">
+    <p class="kv" id="seqNote"></p>
+    <img id="seqImg" alt="Swing sequence"><video id="seqVid" controls playsinline loop muted hidden style="width:100%;border-radius:3px;border:1px solid var(--line)"></video>
     <div class="ctrl"><button class="btn primary" id="seqShare">Share / Save</button></div>
   </div>
 </div></div>
