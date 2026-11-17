@@ -4,7 +4,7 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt } from './swing.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.8.9';
+const VERSION = '1.9.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -711,6 +711,16 @@ function drawSetup() {
       ctx.fillText(`${c.d.toFixed(0)}px`, x + Math.max(8 * dpr, c.d * k) + 3, y + 4);
     }
   }
+  // where to put the ball: a band about a third of the way in, on the side away from the net,
+  // so the player still fits and the ball's flight has most of the picture
+  if (S.view !== 'dtl' && video.videoWidth >= video.videoHeight) {
+    const ts = targetSide(), x0 = ts > 0 ? 0.27 : 0.61, bx = fit.x + x0 * fit.w, bw = 0.12 * fit.w;
+    ctx.fillStyle = 'rgba(255,122,26,0.10)'; ctx.fillRect(bx, fit.y, bw, fit.h);
+    ctx.setLineDash([4 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(255,122,26,0.7)'; ctx.lineWidth = 1.5 * dpr; ctx.strokeRect(bx, fit.y, bw, fit.h); ctx.setLineDash([]);
+    ctx.fillStyle = '#ff7a1a'; ctx.font = `600 ${12 * dpr}px 'Rajdhani', sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText('BALL HERE', bx + bw / 2, fit.y + fit.h * 0.5);
+    ctx.fillText(ts > 0 ? 'net this way →' : '← net this way', fit.x + (ts > 0 ? 0.8 : 0.2) * fit.w, fit.y + fit.h * 0.5); ctx.textAlign = 'left';
+  }
   if (S.teeSpot && eng.w && video.videoWidth >= video.videoHeight) {
     const k = fit.w / eng.w;
     ctx.setLineDash([6 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(63,230,255,0.6)'; ctx.lineWidth = 2 * dpr;
@@ -789,6 +799,8 @@ function ballDistance(b) {
   const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
   return (f * BALL.diameter) / b.d;
 }
+// which way the ball flies across the picture: +1 = to the right
+function targetSide() { return S.hand === 'right' ? 1 : S.hand === 'left' ? -1 : (lastTargetSign || 1); }
 function checkFraming(b) {
   if (!eng.w || !b) return;
   sendConfig(); // the distance used for speed depends on the light
@@ -798,6 +810,12 @@ function checkFraming(b) {
   if (!isDim() && !(+S.ballDist > 0.5) && b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
   if (!isDim() && !(+S.ballDist > 0.5) && b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
   if (isDim()) issues.push({ key: 'slow', say: 'It is too dark. The camera has slowed down, so shots will be missed. Use it in daylight or under bright lights.', text: `Too dark: the camera has slowed to ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. Use it in daylight or under bright lights.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
+  // room for the ball's flight: the ball should sit about a third in from the side away from the net
+  const along = targetSide() > 0 ? xf : 1 - xf; // 0 = edge away from the net, 1 = edge nearest the net
+  if (S.view !== 'dtl' && along > 0.45 && along <= 0.8) {
+    const shift = (along - 0.33) * 2 * dist * Math.tan((+S.hfov * Math.PI) / 360);
+    issues.push({ key: 'flight', say: `Move the phone about ${shift < 0.75 ? 'half a metre' : Math.round(shift) + (Math.round(shift) === 1 ? ' metre' : ' metres')} towards the net, so the camera sees more of the ball's flight.`, text: `The ball is ${Math.round(along * 100)}% of the way across the picture, so the camera only sees a short piece of its flight. Slide the phone about ${shift.toFixed(1)} m towards the net (keep it pointing straight at the player’s line) until the ball sits in the orange “BALL HERE” band on the camera screen.` });
+  }
   if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
   framingIssue = issues.map((i) => i.key).join(',');
   if (!issues.length) return;
