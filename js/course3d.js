@@ -10,6 +10,13 @@ const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t
 const ease = (t) => t * t * (3 - 2 * t);
 function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
+// each kind of course has its own colours and amount of trees
+const THEMES = {
+  park: { deep: '#234f20', rough: ['#27561f', '#2b5d22', '#2f6525'], cut: '#3d802e', land: 0x2f6a2b, trees: 380, pine: 0.34, thin: 0.55, hills: [0x9db7cf, 0x7f9f9c] },
+  links: { deep: '#8b8546', rough: ['#8f8a49', '#8d904a', '#869647'], cut: '#5c9a3b', land: 0x8b8546, trees: 26, pine: 0.15, thin: 0.9, hills: [0x4f8fc4, 0x3f7fb5] },
+  desert: { deep: '#b88758', rough: ['#bb8c5c', '#bd9160', '#a99a5c'], cut: '#5a9a3a', land: 0xb88758, trees: 60, pine: 0.1, thin: 0.8, hills: [0xd0a98c, 0xb56f4d] },
+  forest: { deep: '#1a401e', rough: ['#1e4720', '#235023', '#295a26'], cut: '#38782d', land: 0x1f4a20, trees: 560, pine: 0.8, thin: 0.3, hills: [0x8fb0c4, 0x5f8a78] },
+};
 const SUN = { x: -0.45, y: 0.62, z: -0.64 }; // direction towards the sun
 
 export class Course3D {
@@ -115,7 +122,9 @@ export class Course3D {
   }
 
   // ---- build one hole
-  setHole(hole, seed = 1) {
+  setHole(hole, seed = 1, theme = 'park') {
+    const TH = THEMES[theme] || THEMES.park;
+    this.land.material.color.set(TH.land); this.hills.forEach((m, i) => m.material.color.set(TH.hills[i]));
     if (this.group) { this.scene.remove(this.group); this.group.traverse((o) => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } }); }
     this.hole = hole; this.ph = (seed * 1.7) % 6; this.anim = null; this.trail.visible = false;
     const G = (this.group = new T.Group()); this.scene.add(G);
@@ -124,20 +133,20 @@ export class Course3D {
     const rnd = rng(seed * 977 + 13), pin = pinOf(hole), tee = hole.path[0];
     // trees first (their shadows are painted onto the grass)
     const trees = [];
-    for (let i = 0; i < 2600 && trees.length < 380; i++) {
+    for (let i = 0; i < 3200 && trees.length < TH.trees; i++) {
       const x = x0 + rnd() * W, z = z0 + rnd() * D, n = nearest(hole.path, { x, z });
       if (n.d < hole.fw / 2 + 17 || Math.hypot(x - pin.x, z - pin.z) < hole.greenR + 20 || Math.hypot(x - tee.x, z - tee.z) < 22) continue;
-      if (n.d < 55 && rnd() < 0.55) continue; // thinner near the fairway, thick beyond
+      if (n.d < 55 && rnd() < TH.thin) continue; // thinner near the fairway, thick beyond
       if (hole.haz.some((q) => Math.hypot(x - q.x, z - q.z) < q.r + 7)) continue;
-      trees.push({ x, z, s: 0.75 + rnd() * 0.8, pine: rnd() < 0.34, c: rnd() });
+      trees.push({ x, z, s: 0.75 + rnd() * 0.8, pine: rnd() < TH.pine, c: rnd() });
     }
     // --- paint the grass
     const ppm = Math.min(4, 2048 / Math.max(W, D)), cv = document.createElement('canvas'); cv.width = Math.round(W * ppm); cv.height = Math.round(D * ppm);
     const c = cv.getContext('2d'), X = (x) => (x - x0) * ppm, Y = (z) => (z - z0) * ppm;
     const line = (ctx) => { ctx.beginPath(); hole.path.forEach((p, i) => (i ? ctx.lineTo(X(p.x), Y(p.z)) : ctx.moveTo(X(p.x), Y(p.z)))); };
-    c.fillStyle = '#234f20'; c.fillRect(0, 0, cv.width, cv.height);
+    c.fillStyle = TH.deep; c.fillRect(0, 0, cv.width, cv.height);
     c.lineCap = 'round'; c.lineJoin = 'round';
-    for (const [w, col] of [[104, '#27561f'], [96, '#2b5d22'], [88, '#2f6525'], [hole.fw + 9, '#3d802e']]) { c.strokeStyle = col; c.lineWidth = w * ppm; line(c); c.stroke(); }
+    for (const [w, col] of [[104, TH.rough[0]], [96, TH.rough[1]], [88, TH.rough[2]], [hole.fw + 9, TH.cut]]) { c.strokeStyle = col; c.lineWidth = w * ppm; line(c); c.stroke(); }
     for (let i = 0; i < 9000; i++) { c.fillStyle = rnd() < 0.5 ? 'rgba(0,30,0,0.10)' : 'rgba(190,220,120,0.07)'; const s = (0.6 + rnd() * 2.2) * ppm; c.fillRect(rnd() * cv.width, rnd() * cv.height, s, s); }
     const layer = (draw, band, a) => { // a mown area with light/dark stripes
       const o = document.createElement('canvas'); o.width = cv.width; o.height = cv.height; const k = o.getContext('2d'); k.lineCap = 'round'; k.lineJoin = 'round';

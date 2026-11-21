@@ -22,7 +22,15 @@ export function genHole({ len, par, shape = 'straight', water = 'none' }) {
   return { len, par, shape, water, path, fw: par === 3 ? 20 : 34, greenR: 11, haz };
 }
 
+// short way to write holes: 'par length [l|r] [front|side]'
+const H = (...a) => a.map((t) => { const [par, len, ...r] = t.split(' '); return { par: +par, len: +len, shape: r.includes('l') ? 'left' : r.includes('r') ? 'right' : 'straight', water: r.includes('front') ? 'front' : r.includes('side') ? 'side' : 'none' }; });
 export const COURSES = [
+  { id: 'highveld18', name: 'Highveld Park · 18 holes', theme: 'park', holes: H('4 365', '5 495 r', '3 160', '4 340 l', '4 405', '3 145 front', '5 480 l side', '4 320', '4 390 r',
+    '4 375', '3 175', '5 510 r', '4 350 l front', '4 410', '3 130 side', '4 335 r', '5 470', '4 400 l front') },
+  { id: 'dune18', name: 'Dune Point Links · 18 holes', theme: 'links', holes: H('4 350', '4 395 l', '3 150', '5 505', '4 330 r', '3 185', '4 420', '5 460 l', '4 360',
+    '3 135', '4 385 r', '4 410', '5 520 l', '3 165', '4 345', '4 300 r', '3 195', '5 485') },
+  { id: 'redrock9', name: 'Red Rock Canyon · 9 holes', theme: 'desert', holes: H('4 380', '3 165', '5 500 l', '4 345 r', '4 415', '3 140 front', '5 475 r', '4 360 l', '4 395') },
+  { id: 'pinewood9', name: 'Pinewood Forest · 9 holes', theme: 'forest', holes: H('4 330', '4 370 r', '3 140', '5 465 l', '4 355', '3 170 side', '4 390 l', '5 490 r front', '4 345') },
   { id: 'neon9', name: 'Neon Links · 9 holes', holes: [
     { len: 345, par: 4 }, { len: 150, par: 3 }, { len: 470, par: 5, shape: 'right' }, { len: 370, par: 4, shape: 'left', water: 'side' },
     { len: 135, par: 3, water: 'front' }, { len: 390, par: 4 }, { len: 505, par: 5, shape: 'left' }, { len: 175, par: 3 }, { len: 400, par: 4, shape: 'right', water: 'front' }] },

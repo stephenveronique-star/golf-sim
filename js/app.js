@@ -6,7 +6,7 @@ import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } 
 import { loadThree, Course3D } from './course3d.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2121,7 +2121,7 @@ function view3d(h, animate) {
   if (v3state !== 'on') return;
   document.body.dataset.v3 = 'on'; $('#v3wrap').hidden = false; v3.start(); v3.resize();
   const key = `${round.courseId}:${round.i}`, fresh = v3hole !== key;
-  if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed); v3hole = key; }
+  if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed, (allCourses().find((x) => x.id === round.courseId) || {}).theme); v3hole = key; }
   const pin = pinOf(h), prev = h.path[h.path.length - 2], d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
   $('#pinTag').textContent = round.done ? '' : distTxt(d);
   const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : round.putting ? pin : aimPoint(h, round.p, suggestClub(1e9).longest);
