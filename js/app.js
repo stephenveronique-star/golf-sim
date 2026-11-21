@@ -2,9 +2,10 @@ import { simulate, CLUBS, clubById, estimateSpin, smashFactor, MPH, YARD, BALL }
 import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
+import { COURSES, buildCourse, playShot, pinOf, aimPoint, scoreName } from './round.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '1.9.2';
+const VERSION = '2.0.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -242,6 +243,7 @@ function recordShot(launch, opts = {}) {
   showNumbers(s); renderList(); refreshRange();
   range.play(sim, { label: `${fmtDist(s.carry)} ${dUnit()} carry` });
   say(`${fmtDist(s.carry)} ${S.dist === 'yd' ? 'yards' : 'metres'}`);
+  if (!opts.demo) roundShot({ total: s.total, offline: s.offline });
   return s;
 }
 
@@ -1850,7 +1852,7 @@ function showSection(sec) {
   $('#pageGame').hidden = sec !== 'game';
   if (sec === 'info') renderInfo();
   if (sec === 'game') renderGame();
-  if (sec === 'drive' && !running) $('#start').classList.remove('hide'); // camera not on yet: offer to start it
+  if (sec === 'drive' && !running && !round) $('#start').classList.remove('hide'); // camera not on yet: offer to start it
 }
 $$('#sections button').forEach((b) => b.addEventListener('click', () => showSection(b.dataset.sec)));
 
@@ -1986,15 +1988,248 @@ async function renderGame() {
   }
   // training goal
   h += '<h3>Training goal</h3>' + renderGoal(list);
-  // coming later
-  h += `<h3>My rounds <span class="soon">coming later</span></h3>
-    <div class="later">Your handicap, the courses you’ve played and your scorecards will live here, alongside how your range work carries onto the course.</div>`;
+  h = roundCardHtml() + h;
+  h += `<h3>Handicap and real courses <span class="soon">coming later</span></h3>
+    <div class="later">Your handicap and the real courses you’ve played will live here.</div>`;
   el.innerHTML = h;
   const scoreVals = ok.map((r) => r.score).filter((v) => v != null).reverse().slice(-30);
   if ($('#scoreChart')) drawSeries($('#scoreChart'), scoreVals, [8, 10], '', 1);
   drawGoalChart(list);
 }
 $('#pageGame').addEventListener('change', (e) => { if (e.target.id === 'goalSel') { S.goal = e.target.value; saveSettings(); renderGame(); } });
+
+// ------------------------------------------------------------ play a round
+let round = store.get('round', null); // { courseId, name, i, p, strokes, scores, trail, done, msg, sim }
+let customCourses = store.get('courses', []);
+const allCourses = () => [...COURSES, ...customCourses];
+const roundCourse = () => { const c = allCourses().find((x) => x.id === round.courseId); return c ? buildCourse(c) : null; };
+const saveRound = () => store.set('round', round);
+function clubAvg(id) {
+  const a = shots.filter((s) => s.club === id && !s.miss && !s.demo).map((s) => s.total);
+  if (a.length >= 3) return trimmed(a);
+  // until you have your own numbers: a typical club golfer (about 80% of tour ball speed), through the app's own flight model
+  if (!(id in clubAvg.cache)) { const c = clubById(id); clubAvg.cache[id] = simulate({ speed: c.ball * MPH * 0.8, launch: c.launch + 2, direction: 0, spin: c.spin, spinAxis: 0, altitude: +S.altitude, tempC: +S.tempC, firmness: +S.firmness }).total; }
+  return clubAvg.cache[id];
+}
+clubAvg.cache = {};
+function suggestClub(d) {
+  const list = CLUBS.map((c) => ({ id: c.id, name: c.name, avg: clubAvg(c.id) })).sort((a, b) => b.avg - a.avg);
+  const fit = list.filter((c) => c.avg <= d * 1.06);
+  const pick = fit.length ? fit[0] : list[list.length - 1];
+  return { ...pick, partial: pick.avg > d * 1.12, longest: list[0].avg };
+}
+function startRound(courseId) {
+  const c = allCourses().find((x) => x.id === courseId); if (!c) return;
+  const h = buildCourse(c).holes[0];
+  round = { courseId, name: c.name, i: 0, p: { ...h.path[0] }, strokes: 0, scores: [], trail: [{ ...h.path[0] }], done: false, msg: 'Tee shot. Hit into your net, or tap “Play shot on phone”.', sim: false };
+  saveRound(); log(`round started: ${c.name}`);
+  $('#start').classList.add('hide'); showSection('drive'); renderRound();
+}
+function endRound(save) {
+  if (round && save && round.scores.length) {
+    const c = roundCourse(), pars = c ? c.holes.slice(0, round.scores.length).map((h) => h.par) : [];
+    const rounds = store.get('rounds', []);
+    rounds.push({ id: Date.now(), ts: Date.now(), name: round.name, scores: round.scores, pars, holes: c ? c.holes.length : round.scores.length, sim: round.sim });
+    store.set('rounds', rounds.slice(-50));
+    log(`round saved: ${round.name} ${round.scores.reduce((a, b) => a + b, 0)} (par ${pars.reduce((a, b) => a + b, 0)})`);
+  }
+  round = null; saveRound(); renderRound();
+}
+// a shot (real or simulated) arrives while a round is on
+function roundShot(shot) {
+  if (!round || round.done) return;
+  const c = roundCourse(); if (!c) return;
+  const h = c.holes[round.i];
+  const r = playShot(h, { p: round.p, strokes: round.strokes }, { total: shot.total, offline: shot.offline, reach: suggestClub(1e9).longest });
+  round.trail.push({ ...r.to, bad: !!r.penalty }); if (r.penalty) round.trail.push({ ...r.from });
+  round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; if (shot.sim) round.sim = true;
+  if (r.done) {
+    round.done = true; round.scores[round.i] = r.strokes;
+    const nm = r.pickedUp ? '' : scoreName(r.strokes, h.par);
+    round.msg = `${r.msg} ${nm ? nm + ' — ' : ''}${r.strokes} on a par ${h.par}.`;
+    setTimeout(() => say(nm || 'Next hole'), shot.sim ? 300 : 3200);
+  }
+  saveRound(); renderRound(true);
+}
+function roundNext() {
+  const c = roundCourse(); if (!round || !c) return;
+  if (round.i + 1 >= c.holes.length) {
+    const tot = round.scores.reduce((a, b) => a + b, 0), par = c.holes.reduce((a, h) => a + h.par, 0);
+    toast(`Round finished: ${tot} (${tot === par ? 'level par' : tot > par ? '+' + (tot - par) : tot - par}). Saved in My Game.`, 7000);
+    endRound(true); showSection('game'); return;
+  }
+  round.i++; const h = c.holes[round.i];
+  Object.assign(round, { p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, msg: 'Tee shot.' });
+  saveRound(); renderRound();
+}
+function simShot() {
+  if (!round || round.done) return;
+  const c = roundCourse(), h = c.holes[round.i], d = Math.hypot(round.p.x - pinOf(h).x, round.p.z - pinOf(h).z);
+  const sc = suggestClub(d), g = () => (Math.random() + Math.random() + Math.random() + Math.random() - 2) / 0.58;
+  const total = Math.min(sc.avg, d) * (1 + 0.08 * g());
+  roundShot({ total, offline: total * Math.tan((5 * g() * Math.PI) / 180), sim: true });
+}
+function renderRound(animate) {
+  const on = !!round; document.body.dataset.round = on ? 'on' : 'off';
+  $('#holeCanvas').hidden = !on; $('#roundHud').hidden = !on;
+  if (!on) return;
+  const c = roundCourse(); if (!c) { endRound(false); return; }
+  const h = c.holes[round.i], pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
+  const soFar = round.scores.reduce((a, b) => a + (b || 0), 0), parSoFar = c.holes.slice(0, round.scores.filter((x) => x != null).length).reduce((a, x) => a + x.par, 0);
+  const rel = soFar - parSoFar;
+  $('#rhTitle').textContent = `Hole ${round.i + 1}/${c.holes.length} · Par ${h.par} · ${fmtDist(h.len)} ${dUnit()}`;
+  $('#rhInfo').textContent = round.done ? `Round: ${soFar} (${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel})` : `Shot ${round.strokes + 1} · ${fmtDist(d)} ${dUnit()} to the flag${round.scores.length ? ` · round ${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel}` : ''}`;
+  $('#rhMsg').textContent = round.msg || '';
+  const sc = suggestClub(d);
+  $('#rhClub').hidden = round.done || !!meter.phase; $('#rhSim').hidden = round.done || !!meter.phase; $('#rhNext').hidden = !round.done;
+  $('#rhNext').textContent = round.i + 1 >= c.holes.length ? 'Finish round ›' : 'Next hole ›';
+  $('#rhBag').value = S.club;
+  $('#rhClub').textContent = S.club === sc.id ? `${sc.name}${sc.partial ? ' — easy swing' : ''} ✓` : `Use ${sc.name}${sc.partial ? ' (easy swing)' : ''}`;
+  $('#rhClub').dataset.club = sc.id;
+  drawHole(h, animate);
+}
+let holeAnim = 0;
+function drawHole(h, animate) {
+  const cv = $('#holeCanvas'), r = cv.getBoundingClientRect(), dpr = Math.min(2.5, devicePixelRatio || 1);
+  const W = Math.max(50, r.width), H = Math.max(50, r.height);
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const xs = h.path.map((p) => p.x), zs = h.path.map((p) => p.z);
+  const x0 = Math.min(...xs) - 30, x1 = Math.max(...xs) + 30, z0 = Math.min(...zs, 0) - 50, z1 = Math.max(...zs, 0) + 50;
+  const padT = 14, padB = 96, k = Math.min((W - 24) / (x1 - x0), (H - padT - padB) / (z1 - z0));
+  const ox = (W - (x1 - x0) * k) / 2, oy = padT + (H - padT - padB - (z1 - z0) * k) / 2;
+  const X = (p) => ox + (p.x - x0) * k, Y = (p) => oy + (p.z - z0) * k;
+  ctx.fillStyle = '#000307'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(63,230,255,0.07)'; ctx.lineWidth = 1;
+  for (let m = Math.ceil(x0 / 50) * 50; m <= x1; m += 50) { ctx.beginPath(); ctx.moveTo(ox + (m - x0) * k, 0); ctx.lineTo(ox + (m - x0) * k, H); ctx.stroke(); }
+  for (let m = Math.ceil(z0 / 50) * 50; m <= z1; m += 50) { ctx.beginPath(); ctx.moveTo(0, oy + (m - z0) * k); ctx.lineTo(W, oy + (m - z0) * k); ctx.stroke(); }
+  const pathLine = () => { ctx.beginPath(); h.path.forEach((p, i) => (i ? ctx.lineTo(X(p), Y(p)) : ctx.moveTo(X(p), Y(p)))); };
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(63,230,255,0.35)'; ctx.lineWidth = h.fw * k + 3; ctx.shadowColor = '#3fe6ff'; ctx.shadowBlur = 12; pathLine(); ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#021a22'; ctx.lineWidth = h.fw * k; pathLine(); ctx.stroke();
+  const pin = pinOf(h);
+  for (const z of h.haz) {
+    ctx.beginPath(); ctx.arc(X(z), Y(z), z.r * k, 0, Math.PI * 2);
+    if (z.type === 'water') { ctx.fillStyle = 'rgba(40,110,255,0.45)'; ctx.strokeStyle = '#4a8cff'; } else { ctx.fillStyle = 'rgba(255,190,90,0.28)'; ctx.strokeStyle = 'rgba(255,190,90,0.9)'; }
+    ctx.lineWidth = 1.2; ctx.fill(); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(X(pin), Y(pin), h.greenR * k, 0, Math.PI * 2); ctx.fillStyle = 'rgba(57,255,156,0.22)'; ctx.strokeStyle = '#39ff9c'; ctx.lineWidth = 1.5; ctx.shadowColor = '#39ff9c'; ctx.shadowBlur = 10; ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X(pin), Y(pin)); ctx.lineTo(X(pin), Y(pin) - 16); ctx.stroke();
+  ctx.fillStyle = '#ff7a1a'; ctx.beginPath(); ctx.moveTo(X(pin), Y(pin) - 16); ctx.lineTo(X(pin) + 9, Y(pin) - 12); ctx.lineTo(X(pin), Y(pin) - 8); ctx.closePath(); ctx.fill();
+  const tee = h.path[0]; ctx.strokeStyle = 'rgba(63,230,255,0.9)'; ctx.strokeRect(X(tee) - 4, Y(tee) - 6, 8, 12);
+  // shots so far (the last one draws itself in)
+  const tr = round.trail, t = animate ? 0 : 1;
+  const frame = (tt) => {
+    if (!round || round.trail !== tr) return;
+    ctx.save();
+    for (let i = 1; i < tr.length; i++) {
+      const a = tr[i - 1], b = tr[i], last = i === tr.length - 1 || (tr[i].bad && i === tr.length - 2);
+      const f = last ? tt : 1, bx = X(a) + (X(b) - X(a)) * f, by = Y(a) + (Y(b) - Y(a)) * f;
+      if (tr[i - 1].bad) continue; // the walk back after a penalty isn't a shot
+      ctx.strokeStyle = b.bad ? '#ff3d5a' : '#3fe6ff'; ctx.lineWidth = 2; ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(X(a), Y(a)); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.fillStyle = b.bad ? '#ff3d5a' : '#bff6ff'; ctx.beginPath(); ctx.arc(bx, by, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.shadowColor = '#fff'; ctx.shadowBlur = 12; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(X(round.p), Y(round.p), 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  };
+  if (!round.done) { // aim line
+    const aim = aimPoint(h, round.p, suggestClub(1e9).longest);
+    ctx.setLineDash([4, 6]); ctx.strokeStyle = 'rgba(255,122,26,0.7)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(X(round.p), Y(round.p)); ctx.lineTo(X(aim), Y(aim)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  cancelAnimationFrame(holeAnim);
+  if (!animate) { frame(1); return; }
+  const base = ctx.getImageData(0, 0, cv.width, cv.height), t0 = performance.now();
+  const step = (now) => { const tt = Math.min(1, (now - t0) / 900); ctx.putImageData(base, 0, 0); frame(tt); if (tt < 1) holeAnim = requestAnimationFrame(step); };
+  holeAnim = requestAnimationFrame(step);
+}
+window.addEventListener('resize', () => { if (round) renderRound(); });
+// ---- playing on the phone (no net): pick a club, then two taps — power, then aim
+const meter = { phase: 0, t0: 0, power: 0, raf: 0 };
+function meterPos(now) { const period = meter.phase === 1 ? 1500 : 1000, u = ((now - meter.t0) % (period * 2)) / period; return u <= 1 ? u : 2 - u; } // 0..1..0
+function meterLoop(now) {
+  if (!meter.phase) return;
+  $('#rhMark').style.left = `${meterPos(now) * 100}%`;
+  meter.raf = requestAnimationFrame(meterLoop);
+}
+function meterStart() {
+  if (!round || round.done) return;
+  meter.phase = 1; meter.t0 = performance.now();
+  $('#rhMeter').hidden = false; $('#rhMeter').dataset.phase = '1'; $('#rhMeterLbl').textContent = `POWER — ${clubById(S.club).name}: tap when the marker is in the green`;
+  $('#rhSim').hidden = true; $('#rhClub').hidden = true;
+  meter.raf = requestAnimationFrame(meterLoop);
+}
+function meterTap() {
+  const pos = meterPos(performance.now());
+  if (meter.phase === 1) { meter.power = pos; meter.phase = 2; meter.t0 = performance.now() - 500; $('#rhMeter').dataset.phase = '2'; $('#rhMeterLbl').textContent = 'AIM — tap when the marker is in the middle'; return; }
+  if (meter.phase !== 2) return;
+  cancelAnimationFrame(meter.raf); meter.phase = 0; $('#rhMeter').hidden = true;
+  // power: the green zone (78–92%) is a full shot; beyond it you swing too hard and spray it
+  const pw = meter.power, over = Math.max(0, pw - 0.92), aim = (pos - 0.5) * 2; // aim: -1 left … +1 right
+  const total = clubAvg(S.club) * Math.min(1.06, pw / 0.85) * (1 + (Math.random() - 0.5) * 0.04);
+  const deg = aim * 14 + (Math.random() - 0.5) * (2 + over * 120);
+  log(`phone shot: ${S.club} power ${(pw * 100).toFixed(0)}% aim ${(aim * 100).toFixed(0)} → ${total.toFixed(0)} m, ${deg.toFixed(1)}°`);
+  roundShot({ total, offline: total * Math.tan((deg * Math.PI) / 180), sim: true });
+}
+$('#rhSim').addEventListener('click', meterStart);
+$('#rhTap').addEventListener('click', meterTap);
+$('#rhNext').addEventListener('click', roundNext);
+$('#rhEnd').addEventListener('click', () => { const played = round && round.scores.length; endRound(!!played); toast(played ? 'Round ended — the holes you finished are saved in My Game.' : 'Round ended.'); });
+$('#rhBag').innerHTML = CLUBS.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
+$('#rhBag').addEventListener('change', (e) => { S.club = e.target.value; saveSettings(); renderClubs(); renderRound(); });
+$('#rhClub').addEventListener('click', (e) => { S.club = e.currentTarget.dataset.club; saveSettings(); renderClubs(); renderRound(); });
+
+// ---- course designer
+function openDesigner() {
+  $('#cdName').value = ''; $('#cdHoles').innerHTML = ''; for (let i = 0; i < 3; i++) addDesignHole();
+  openSheet('#courseSheet');
+}
+function addDesignHole(v = {}) {
+  const n = $('#cdHoles').children.length + 1; if (n > 18) return;
+  const row = document.createElement('div'); row.className = 'cd-row';
+  row.innerHTML = `<b>${n}</b>
+    <select class="cdPar"><option value="3">Par 3</option><option value="4" selected>Par 4</option><option value="5">Par 5</option></select>
+    <input class="cdLen" type="number" min="60" max="560" step="5" value="${v.len || 340}" aria-label="Length in metres"> m
+    <select class="cdShape"><option value="straight">Straight</option><option value="left">Bends left</option><option value="right">Bends right</option></select>
+    <select class="cdWater"><option value="none">No water</option><option value="front">Water in front of green</option><option value="side">Water beside green</option></select>
+    <button class="btn ghost cdDel" aria-label="Remove hole">✕</button>`;
+  $('#cdHoles').appendChild(row);
+}
+$('#cdAdd').addEventListener('click', () => addDesignHole());
+$('#cdHoles').addEventListener('click', (e) => { if (e.target.classList.contains('cdDel')) { e.target.closest('.cd-row').remove(); [...$('#cdHoles').children].forEach((r, i) => { r.querySelector('b').textContent = i + 1; }); } });
+$('#cdHoles').addEventListener('change', (e) => { if (e.target.classList.contains('cdPar')) { const len = e.target.closest('.cd-row').querySelector('.cdLen'); len.value = { 3: 150, 4: 350, 5: 480 }[e.target.value]; } });
+$('#cdSave').addEventListener('click', () => {
+  const holes = [...$('#cdHoles').children].map((r) => ({ par: +r.querySelector('.cdPar').value, len: Math.max(60, Math.min(560, +r.querySelector('.cdLen').value || 300)), shape: r.querySelector('.cdShape').value, water: r.querySelector('.cdWater').value }));
+  if (!holes.length) { toast('Add at least one hole'); return; }
+  const name = ($('#cdName').value || 'My course').trim().slice(0, 30);
+  customCourses.push({ id: 'c' + Date.now(), name: `${name} · ${holes.length} hole${holes.length > 1 ? 's' : ''}`, holes, custom: true });
+  store.set('courses', customCourses); log(`course designed: ${name} (${holes.length} holes)`);
+  closeSheets(); showSection('game'); toast('Course saved — choose it under Play a round.');
+});
+function roundCardHtml() {
+  const rounds = store.get('rounds', []).slice().reverse();
+  const opts = allCourses().map((c) => `<option value="${c.id}">${c.name}${c.custom ? ' (mine)' : ''} — par ${c.holes.reduce((a, h) => a + h.par, 0)}</option>`).join('');
+  let h = `<h3>Play a round</h3><div class="summary"><div class="sub" style="margin-bottom:8px">Pick a course and play it shot by shot into your net. The app flies each shot down the hole, tells you what’s left and suggests a club. Putting is worked out for you from how close you hit it. Not at the net? Play it on the phone like a game: choose a club, then tap for power and aim.</div>
+    <select id="rcCourse">${opts}</select>
+    <div class="ctrl" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${round ? '<button class="btn primary" id="rcResume">Back to my round ›</button>' : ''}<button class="btn ${round ? '' : 'primary'}" id="rcStart">${round ? 'Start a new round' : 'Start round'}</button><button class="btn" id="rcDesign">＋ Design a course</button>${customCourses.length ? '<button class="btn ghost" id="rcDelete">Delete my chosen course</button>' : ''}</div></div>`;
+  h += '<h3>My rounds</h3>';
+  if (!rounds.length) h += '<div class="empty">No rounds yet.</div>';
+  for (const r of rounds.slice(0, 10)) {
+    const tot = r.scores.reduce((a, b) => a + b, 0), par = r.pars.reduce((a, b) => a + b, 0), rel = tot - par;
+    h += `<div class="sess"><div class="sess-h" style="cursor:default"><div><b>${r.name}</b> <span class="sub">${fmtDay(r.ts)}${r.scores.length < r.holes ? ` · ${r.scores.length} of ${r.holes} holes` : ''}${r.sim ? ' · includes simulated shots' : ''}</span>
+      <div class="sub">${r.scores.map((s, i) => `<span style="color:${s < r.pars[i] ? 'var(--cyan)' : s > r.pars[i] ? 'var(--orange)' : 'var(--text)'}">${s}</span>`).join(' ')}</div></div>
+      <div class="go" style="font-family:var(--data)">${tot} <span class="sub">(${rel === 0 ? 'E' : rel > 0 ? '+' + rel : rel})</span></div></div></div>`;
+  }
+  return h;
+}
+$('#pageGame').addEventListener('click', (e) => {
+  const id = e.target.id, sel = $('#rcCourse');
+  if (id === 'rcStart') startRound(sel.value);
+  else if (id === 'rcResume') { showSection('drive'); renderRound(); }
+  else if (id === 'rcDesign') openDesigner();
+  else if (id === 'rcDelete') { const c = customCourses.find((x) => x.id === sel.value); if (!c) { toast('Choose one of your own courses first'); return; } customCourses = customCourses.filter((x) => x !== c); store.set('courses', customCourses); renderGame(); toast('Course deleted'); }
+});
+renderRound();
 
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
@@ -2043,6 +2278,6 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 setInterval(() => { if (!document.hidden && eng.state !== 'armed') checkForUpdate(); }, 10 * 60 * 1000);
 
 // expose for automated testing
-window.__golf = { eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
+window.__golf = { simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
 $('#testSoundBtn').addEventListener('click', testSound);
 $('#cSound').addEventListener('click', testSound);

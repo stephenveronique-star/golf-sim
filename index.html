@@ -395,6 +395,27 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
 #updateBar { position: fixed; left: 50%; bottom: calc(var(--safe-b) + 14px); transform: translateX(-50%); z-index: 50; background: var(--orange); color: #1a0800; font: 700 16px 'Rajdhani', sans-serif; letter-spacing: 0.04em; padding: 12px 20px; border-radius: 4px; box-shadow: 0 0 24px rgba(255,122,26,0.7); }
 .btn.showme { float: right; margin: 0 0 6px 10px; padding: 5px 10px; font-size: 13px; border-color: var(--orange); color: var(--orange); }
 .btn.showme.on { background: var(--orange); color: #1a0800; }
+#holeCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 2; }
+.round-hud { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; background: rgba(0,6,10,0.82); border: 1px solid var(--edge); border-radius: 4px; padding: 6px 10px; }
+.round-hud .rh-t { font-family: var(--data); font-weight: 700; font-size: 12px; letter-spacing: 0.08em; color: var(--cyan); }
+.round-hud .rh-i { font-weight: 700; font-size: 16px; }
+.round-hud .rh-m { color: #bfe9f5; font-size: 14px; min-height: 18px; }
+.round-hud .rh-b { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+.round-hud .btn { padding: 5px 10px; font-size: 13px; }
+body[data-round=on] .view-toggle, body[data-round=on] .pip { display: none; }
+body[data-round=on] .ready-light { top: 6px; transform: translateX(-50%) scale(0.6); transform-origin: top center; z-index: 4; }
+.cd-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.cd-row b { width: 22px; font-family: var(--data); color: var(--cyan); }
+.cd-row select, .cd-row input, #rcCourse { font: inherit; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 5px 6px; }
+.cd-row input { width: 74px; } #rcCourse { width: 100%; }
+.rh-meter .rh-ml { font-family: var(--data); font-size: 10px; letter-spacing: 0.08em; color: var(--orange); margin: 4px 0; }
+.rh-meter .rh-row { display: flex; gap: 10px; align-items: center; }
+.rh-track { position: relative; flex: 1; height: 22px; border: 1px solid var(--edge); border-radius: 3px; background: #000; overflow: hidden; }
+.rh-track .zone { position: absolute; top: 0; bottom: 0; background: rgba(57,255,156,0.35); border-left: 1px solid #39ff9c; border-right: 1px solid #39ff9c; }
+.rh-meter[data-phase="1"] .zone { left: 78%; width: 14%; } .rh-meter[data-phase="2"] .zone { left: 45%; width: 10%; }
+.rh-track i { position: absolute; top: -2px; bottom: -2px; width: 4px; margin-left: -2px; background: #fff; box-shadow: 0 0 10px #3fe6ff; }
+.rh-meter #rhTap { padding: 8px 26px; font-size: 16px; }
+#rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
 <body>
@@ -414,6 +435,12 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
   <div class="main">
     <div class="stage">
       <canvas id="range"></canvas>
+      <canvas id="holeCanvas" hidden></canvas>
+      <div class="round-hud" id="roundHud" hidden>
+        <div class="rh-t" id="rhTitle"></div><div class="rh-i" id="rhInfo"></div><div class="rh-m" id="rhMsg"></div>
+        <div class="rh-meter" id="rhMeter" hidden><div class="rh-ml" id="rhMeterLbl"></div><div class="rh-row"><div class="rh-track"><span class="zone"></span><i id="rhMark"></i></div><button class="btn primary" id="rhTap">TAP</button></div></div>
+        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn ghost" id="rhEnd">End round</button></div>
+      </div>
       <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
       <div class="ready-light" id="readyLight"><b></b><span></span></div>
       <div class="pip" id="pip" hidden><video id="video" playsinline muted autoplay></video><canvas id="pipCanvas"></canvas><div class="tag" id="pipTag">Camera</div></div>
@@ -596,6 +623,16 @@ body[data-ready=tilt] .setup::after, body[data-ready=moved] .setup::after { box-
   <p class="kv" id="dShotNote"></p>
   <h3>3 · Report</h3>
   <pre id="dText"></pre>
+</div></div>
+
+<!-- course designer -->
+<div class="overlay" id="courseSheet"><div class="sheet diag">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Design a course</h2>
+  <p class="kv">Give each hole a par, a length and a shape. The app lays out the fairway, green and bunkers for you. Up to 18 holes.</p>
+  <div class="field"><label>Course name</label><input id="cdName" type="text" maxlength="30" placeholder="e.g. Home Nine" style="width:220px"></div>
+  <div id="cdHoles"></div>
+  <div class="diag-btns"><button class="btn" id="cdAdd">＋ Add a hole</button><button class="btn primary" id="cdSave">Save course</button></div>
 </div></div>
 
 <!-- my swings -->
