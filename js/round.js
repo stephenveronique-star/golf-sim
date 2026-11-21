@@ -85,7 +85,7 @@ export function playShot(hole, st, shot, rnd = Math.random, manualPutt = false) 
   const pin = pinOf(hole), from = st.p;
   const lie0 = st.strokes === 0 ? 'tee' : lieAt(hole, from);
   const f = lie0 === 'rough' ? 0.9 : lie0 === 'bunker' ? 0.75 : 1;
-  const aim = aimPoint(hole, from, shot.reach || shot.total);
+  const aim = shot.aim || aimPoint(hole, from, shot.reach || shot.total);
   const d = dist(from, aim) || 1, ux = (aim.x - from.x) / d, uz = (aim.z - from.z) / d;
   const T = shot.total * f;
   const np = { x: from.x + ux * T - uz * shot.offline, z: from.z + uz * T + ux * shot.offline };
@@ -102,14 +102,17 @@ export function playShot(hole, st, shot, rnd = Math.random, manualPutt = false) 
   return { ...out, p: np, strokes, done: false, msg: `${lie === 'fairway' ? 'Fairway' : lie === 'bunker' ? 'In the bunker (next shot goes about 25% shorter)' : 'In the rough (next shot goes about 10% shorter)'} — ${Math.round(dist(np, pin))} m to the flag.` };
 }
 /** One putt played by hand. putt = { len (metres it would roll), deg (aim error, + = right) } */
-export function playPutt(hole, st, putt) {
+export function playPutt(hole, st, putt, slope = { a: 0, g: 0 }) {
   const pin = pinOf(hole), from = st.p, d = dist(from, pin) || 0.01, ux = (pin.x - from.x) / d, uz = (pin.z - from.z) / d;
   const a = (putt.deg * Math.PI) / 180, dx = ux * Math.cos(a) - uz * Math.sin(a), dz = uz * Math.cos(a) + ux * Math.sin(a);
-  const strokes = st.strokes + 1, miss = Math.abs(d * Math.sin(a)), online = miss <= 0.11;
-  if (online && putt.len >= d - 0.03 && putt.len <= d + 1.5) return { from, to: pin, p: pin, strokes, done: true, holed: true, msg: 'Holed it!' };
-  const np = { x: from.x + dx * putt.len, z: from.z + dz * putt.len }, left = dist(np, pin);
+  // the green's slope: gx,gz = downhill, in percent. Downhill putts run on, uphill ones pull up, side slopes make the ball curve.
+  const gx = slope.g * Math.cos(slope.a), gz = slope.g * Math.sin(slope.a), along = gx * dx + gz * dz, cross = gx * -dz + gz * dx;
+  const len = putt.len * (1 + 0.06 * along), side = (s) => 0.006 * cross * s * s;
+  const strokes = st.strokes + 1, missAt = d * Math.sin(a) + side(d), miss = Math.abs(missAt), online = miss <= 0.11;
+  if (online && len >= d - 0.03 && len <= d + 1.5) return { from, to: pin, p: pin, strokes, done: true, holed: true, holedFrom: d, msg: 'Holed it!' };
+  const np = { x: from.x + dx * len - dz * side(len), z: from.z + dz * len + dx * side(len) }, left = dist(np, pin);
   if (strokes >= hole.par * 2 + 1) return { from, to: np, p: np, strokes, done: true, pickedUp: true, msg: 'Picked up, on to the next hole.' };
-  const why = putt.len < d - 0.03 ? (online ? 'On line but short' : 'Short') : online ? 'Too hard, it ran over the hole' : `Missed ${putt.deg > 0 ? 'right' : 'left'}`;
+  const why = len < d - 0.03 ? (online ? 'On line but short' : 'Short') : online ? 'Too hard, it ran over the hole' : `Missed ${missAt > 0 ? 'right' : 'left'}`;
   return { from, to: np, p: np, strokes, done: false, left, msg: `${why}. ${left.toFixed(1)} m left.` };
 }
 export function scoreName(strokes, par) {

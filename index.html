@@ -425,6 +425,12 @@ body[data-v3=on] #holeCanvas { inset: auto; left: 8px; top: 8px; width: 46%; max
 body[data-v3=on] .round-hud { position: static; border-radius: 0; border-width: 1px 0 0; background: #00060a; }
 body[data-v3=on] .ready-light { left: auto; right: 8px; transform: scale(0.6); transform-origin: top right; }
 @media (orientation: portrait) { body[data-round=on] .main { grid-template-rows: 68% minmax(0, 1fr); } }
+.round-hud .rh-w { color: var(--orange); font-size: 13px; font-weight: 600; min-height: 16px; }
+.round-hud .rh-w i { display: inline-block; font-style: normal; font-size: 16px; line-height: 1; margin: 0 2px; }
+.badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.badge { border: 1px solid var(--line); border-radius: 4px; padding: 8px; opacity: 0.4; }
+.badge.got { opacity: 1; border-color: var(--cyan); box-shadow: 0 0 12px rgba(63,230,255,0.25); }
+.badge b { display: block; } .badge span { font-size: 12px; color: var(--muted); } .badge em { font-style: normal; font-size: 22px; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -448,9 +454,9 @@ body[data-v3=on] .ready-light { left: auto; right: 8px; transform: scale(0.6); t
       <div id="v3wrap" hidden><canvas id="hole3d"></canvas><div id="pinTag" hidden></div></div>
       <canvas id="holeCanvas" hidden></canvas>
       <div class="round-hud" id="roundHud" hidden>
-        <div class="rh-t" id="rhTitle"></div><div class="rh-i" id="rhInfo"></div><div class="rh-m" id="rhMsg"></div>
+        <div class="rh-t" id="rhTitle"></div><div class="rh-i" id="rhInfo"></div><div class="rh-m" id="rhMsg"></div><div class="rh-w" id="rhWind"></div>
         <div class="rh-meter" id="rhMeter" hidden><div class="rh-ml" id="rhMeterLbl"></div><div class="rh-row"><div class="rh-track"><span class="zone"></span><i id="rhMark"></i></div><button class="btn primary" id="rhTap">TAP</button></div></div>
-        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn ghost" id="rhEnd">End round</button></div>
+        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhAimL" aria-label="Aim left">◀ Aim</button><button class="btn" id="rhAimR" aria-label="Aim right">Aim ▶</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn ghost" id="rhEnd">End round</button></div>
       </div>
       <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
       <div class="ready-light" id="readyLight"><b></b><span></span></div>

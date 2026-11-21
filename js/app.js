@@ -6,7 +6,7 @@ import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } 
 import { loadThree, Course3D } from './course3d.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2019,16 +2019,49 @@ function suggestClub(d) {
   const pick = fit.length ? fit[0] : list[list.length - 1];
   return { ...pick, partial: pick.avg > d * 1.12, longest: list[0].avg };
 }
+// ---- wind, green slope and aim for the hole being played
+function holeSetup() { // called at the start of every hole
+  const r = Math.random; round.wind = r() < 0.2 ? { s: 0, a: 0 } : { s: Math.round(1 + r() * 7), a: r() * Math.PI * 2 };
+  round.slope = { a: r() * Math.PI * 2, g: Math.round((0.5 + r() * 2.3) * 10) / 10 }; round.aimOff = 0;
+}
+function curAim(h) { // where the shot is aimed, after any left/right adjustment
+  const base = round.putting ? pinOf(h) : aimPoint(h, round.p, suggestClub(1e9).longest), a = ((round.aimOff || 0) * Math.PI) / 180;
+  const dx = base.x - round.p.x, dz = base.z - round.p.z;
+  return { x: round.p.x + dx * Math.cos(a) - dz * Math.sin(a), z: round.p.z + dz * Math.cos(a) + dx * Math.sin(a) };
+}
+function aimDir(h) { const a = curAim(h), L = Math.hypot(a.x - round.p.x, a.z - round.p.z) || 1; return { x: (a.x - round.p.x) / L, z: (a.z - round.p.z) / L }; }
+// ---- badges
+const BADGES = [
+  ['first', '🏁', 'First round', 'Finish a round'], ['full18', '⛳', 'The full 18', 'Finish an 18-hole round'], ['level', '🎯', 'Level best', 'Finish a round at level par or better'],
+  ['birdie', '🐦', 'Birdie', 'Make a birdie'], ['eagle', '🦅', 'Eagle', 'Make an eagle or better'], ['ace', '💎', 'Hole in one', 'Hole your tee shot'],
+  ['bomb', '🚀', 'Big hitter', 'Hit a shot of 230 m or more in a round'], ['snake', '🐍', 'Long putt', 'Hole a putt from 6 m or more'],
+  ['net', '🏌️', 'Range round', 'Finish a round hitting real shots at your net'], ['designer', '📐', 'Course designer', 'Design and save your own course'],
+];
+function award(id) {
+  const got = store.get('badges', {}); if (got[id]) return;
+  const b = BADGES.find((x) => x[0] === id); if (!b) return;
+  got[id] = Date.now(); store.set('badges', got); log(`badge earned: ${b[2]}`);
+  setTimeout(() => { toast(`${b[1]} Badge earned: ${b[2]}`, 6000); say(`Badge earned. ${b[2]}`); }, 4200);
+}
+function badgesHtml() {
+  const got = store.get('badges', {}), n = BADGES.filter((b) => got[b[0]]).length;
+  return `<h3>Badges · ${n} of ${BADGES.length}</h3><div class="badges">${BADGES.map((b) => `<div class="badge ${got[b[0]] ? 'got' : ''}"><em>${got[b[0]] ? b[1] : '🔒'}</em><b>${b[2]}</b><span>${b[3]}</span></div>`).join('')}</div>`;
+}
+function holeBadges(strokes, par) { if (strokes === 1) award('ace'); if (strokes <= par - 2) award('eagle'); else if (strokes === par - 1) award('birdie'); }
 function startRound(courseId, mode = 'range') {
   const c = allCourses().find((x) => x.id === courseId); if (!c) return;
   const h = buildCourse(c).holes[0];
   round = { courseId, name: c.name, i: 0, p: { ...h.path[0] }, strokes: 0, scores: [], trail: [{ ...h.path[0] }], done: false, msg: mode === 'arcade' ? 'Tee shot. Pick a club, then tap “Play shot”.' : 'Tee shot. Hit into your net, or tap “Play shot on phone”.', sim: false, mode, putting: false };
-  saveRound(); log(`round started: ${c.name}`);
+  holeSetup(); saveRound(); log(`round started: ${c.name}`);
   $('#start').classList.add('hide'); showSection('drive'); renderRound();
 }
 function endRound(save) {
   if (round && save && round.scores.length) {
     const c = roundCourse(), pars = c ? c.holes.slice(0, round.scores.length).map((h) => h.par) : [];
+    if (c && round.scores.length >= c.holes.length) {
+      award('first'); if (c.holes.length >= 18) award('full18'); if (round.mode !== 'arcade' && !round.sim) award('net');
+      if (round.scores.reduce((a, b) => a + b, 0) <= pars.reduce((a, b) => a + b, 0)) award('level');
+    }
     const rounds = store.get('rounds', []);
     rounds.push({ id: Date.now(), ts: Date.now(), name: round.name, scores: round.scores, pars, holes: c ? c.holes.length : round.scores.length, sim: round.sim });
     store.set('rounds', rounds.slice(-50));
@@ -2041,13 +2074,18 @@ function roundShot(shot) {
   if (!round || round.done || round.putting) return;
   const c = roundCourse(); if (!c) return;
   const h = c.holes[round.i];
-  const r = playShot(h, { p: round.p, strokes: round.strokes }, { total: shot.total, offline: shot.offline, reach: suggestClub(1e9).longest }, Math.random, round.mode === 'arcade');
+  // wind: a tailwind adds distance, a headwind takes it off, a crosswind pushes the ball sideways (more on longer shots)
+  const u = aimDir(h), w = round.wind || { s: 0, a: 0 }, wx = Math.cos(w.a) * w.s, wz = Math.sin(w.a) * w.s, k = Math.min(1.5, shot.total / 150);
+  const total = shot.total < 30 ? shot.total : shot.total * (1 + 0.012 * (wx * u.x + wz * u.z) * k), offline = shot.offline + (shot.total < 30 ? 0 : 0.006 * (wx * -u.z + wz * u.x) * shot.total * k);
+  const r = playShot(h, { p: round.p, strokes: round.strokes }, { total, offline, aim: curAim(h) }, Math.random, round.mode === 'arcade');
+  if (total >= 230) award('bomb');
+  round.aimOff = 0;
   if (r.onGreen) round.putting = true;
   round.trail.push({ ...r.to, bad: !!r.penalty }); if (r.penalty) round.trail.push({ ...r.from });
   round.last = { from: r.from, to: r.to, penalty: !!r.penalty, done: !!r.done, apex: shot.apex };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; if (shot.sim) round.sim = true;
   if (r.done) {
-    round.done = true; round.scores[round.i] = r.strokes;
+    round.done = true; round.scores[round.i] = r.strokes; if (!r.pickedUp) holeBadges(r.strokes, h.par);
     const nm = r.pickedUp ? '' : scoreName(r.strokes, h.par);
     round.msg = `${r.msg} ${nm ? nm + ' — ' : ''}${r.strokes} on a par ${h.par}.`;
     setTimeout(() => say(nm || 'Next hole'), shot.sim ? 300 : 3200);
@@ -2057,11 +2095,12 @@ function roundShot(shot) {
 function roundPutt(pt) {
   if (!round || round.done || !round.putting) return;
   const c = roundCourse(); if (!c) return;
-  const h = c.holes[round.i], r = playPutt(h, { p: round.p, strokes: round.strokes }, pt);
+  const h = c.holes[round.i], r = playPutt(h, { p: round.p, strokes: round.strokes }, { len: pt.len, deg: pt.deg + (round.aimOff || 0) }, round.slope);
+  round.aimOff = 0; if (r.holed && r.holedFrom >= 6) award('snake');
   round.trail.push({ ...r.to }); round.last = { from: r.from, to: r.to, putt: true, done: !!r.holed };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; round.sim = true;
   if (r.done) {
-    round.done = true; round.putting = false; round.scores[round.i] = r.strokes;
+    round.done = true; round.putting = false; round.scores[round.i] = r.strokes; if (!r.pickedUp) holeBadges(r.strokes, h.par);
     const nm = r.pickedUp ? '' : scoreName(r.strokes, h.par);
     round.msg = `${r.msg} ${nm ? nm + ', ' : ''}${r.strokes} on a par ${h.par}.`;
     setTimeout(() => say(nm || 'Next hole'), 2200);
@@ -2078,6 +2117,7 @@ function roundNext() {
   }
   round.i++; const h = c.holes[round.i];
   Object.assign(round, { p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, putting: false, last: null, msg: 'Tee shot.' });
+  holeSetup();
   saveRound(); renderRound();
 }
 function simShot() {
@@ -2103,6 +2143,18 @@ function renderRound(animate) {
   $('#rhClub').hidden = round.done || !!meter.phase || round.putting; $('#rhBag').hidden = !!round.putting; $('#rhSim').hidden = round.done || !!meter.phase;
   $('#rhSim').textContent = round.putting ? '⛳ Putt' : round.mode === 'arcade' ? '🎮 Play shot' : '🎮 Play shot on phone'; $('#rhNext').hidden = !round.done;
   $('#rhNext').textContent = round.i + 1 >= c.holes.length ? 'Finish round ›' : 'Next hole ›';
+  $('#rhAimL').hidden = $('#rhAimR').hidden = round.done || !!meter.phase;
+  { // wind, slope and aim line
+    const u = aimDir(h), w = round.wind || { s: 0, a: 0 }, sl = round.slope || { a: 0, g: 0 }, ao = round.aimOff || 0, bits = [];
+    const rel = (a) => ((a - Math.atan2(u.z, u.x)) * 180) / Math.PI;
+    if (round.putting) {
+      const gx = sl.g * Math.cos(sl.a), gz = sl.g * Math.sin(sl.a), along = gx * u.x + gz * u.z, cross = gx * -u.z + gz * u.x;
+      const p1 = Math.abs(cross) < 0.3 ? 'straight' : `breaks ${cross > 0 ? 'right' : 'left'} (${Math.abs(cross).toFixed(1)}%)`, p2 = Math.abs(along) < 0.3 ? 'flat' : `${along > 0 ? 'downhill' : 'uphill'} (${Math.abs(along).toFixed(1)}%)`;
+      bits.push(`Green: ${p1}, ${p2} <i style="transform:rotate(${rel(sl.a)}deg)">↑</i>`);
+    } else if (!round.done) bits.push(w.s ? `Wind ${Math.round(w.s * 3.6)} km/h <i style="transform:rotate(${rel(w.a)}deg)">↑</i>` : 'No wind');
+    if (ao && !round.done) bits.push(`Aim ${Math.abs(ao)}° ${ao > 0 ? 'right' : 'left'}`);
+    $('#rhWind').innerHTML = round.done ? '' : bits.join(' · ');
+  }
   $('#rhBag').value = S.club;
   $('#rhClub').textContent = S.club === sc.id ? `${sc.name}${sc.partial ? ' — easy swing' : ''} ✓` : `Use ${sc.name}${sc.partial ? ' (easy swing)' : ''}`;
   $('#rhClub').dataset.club = sc.id;
@@ -2121,10 +2173,10 @@ function view3d(h, animate) {
   if (v3state !== 'on') return;
   document.body.dataset.v3 = 'on'; $('#v3wrap').hidden = false; v3.start(); v3.resize();
   const key = `${round.courseId}:${round.i}`, fresh = v3hole !== key;
-  if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed, (allCourses().find((x) => x.id === round.courseId) || {}).theme); v3hole = key; }
+  if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed, (allCourses().find((x) => x.id === round.courseId) || {}).theme, round.slope); v3hole = key; }
   const pin = pinOf(h), prev = h.path[h.path.length - 2], d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
   $('#pinTag').textContent = round.done ? '' : distTxt(d);
-  const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : round.putting ? pin : aimPoint(h, round.p, suggestClub(1e9).longest);
+  const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : curAim(h);
   let ring = null;
   if (!round.done && !round.putting) { const L = Math.hypot(aim.x - round.p.x, aim.z - round.p.z) || 1, reach = clubAvg(S.club); ring = { x: round.p.x + ((aim.x - round.p.x) / L) * reach, z: round.p.z + ((aim.z - round.p.z) / L) * reach }; }
   v3.setState(round.p, aim, ring, !fresh, !!round.putting, !!round.done);
@@ -2181,7 +2233,7 @@ function drawHole(h, animate) {
     ctx.restore();
   };
   if (!round.done) { // aim line
-    const aim = aimPoint(h, round.p, suggestClub(1e9).longest);
+    const aim = curAim(h);
     ctx.setLineDash([4, 6]); ctx.strokeStyle = 'rgba(255,122,26,0.7)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(X(round.p), Y(round.p)); ctx.lineTo(X(aim), Y(aim)); ctx.stroke(); ctx.setLineDash([]);
   }
   cancelAnimationFrame(holeAnim);
@@ -2233,6 +2285,7 @@ function meterTap() {
   roundShot({ total, offline: total * Math.tan((deg * Math.PI) / 180), sim: true });
 }
 $('#rhSim').addEventListener('click', meterStart);
+for (const [id, s] of [['#rhAimL', -1], ['#rhAimR', 1]]) $(id).addEventListener('click', () => { if (!round || round.done) return; const st = round.putting ? 0.5 : 2, lim = round.putting ? 8 : 40; round.aimOff = Math.max(-lim, Math.min(lim, (round.aimOff || 0) + s * st)); saveRound(); renderRound(); });
 $('#rhTap').addEventListener('click', meterTap);
 $('#rhNext').addEventListener('click', roundNext);
 $('#rhEnd').addEventListener('click', () => { const played = round && round.scores.length; endRound(!!played); toast(played ? 'Round ended — the holes you finished are saved in My Game.' : 'Round ended.'); });
@@ -2260,6 +2313,7 @@ $('#cdAdd').addEventListener('click', () => addDesignHole());
 $('#cdHoles').addEventListener('click', (e) => { if (e.target.classList.contains('cdDel')) { e.target.closest('.cd-row').remove(); [...$('#cdHoles').children].forEach((r, i) => { r.querySelector('b').textContent = i + 1; }); } });
 $('#cdHoles').addEventListener('change', (e) => { if (e.target.classList.contains('cdPar')) { const len = e.target.closest('.cd-row').querySelector('.cdLen'); len.value = { 3: 150, 4: 350, 5: 480 }[e.target.value]; } });
 $('#cdSave').addEventListener('click', () => {
+  setTimeout(() => { if (customCourses.length) award('designer'); }, 200);
   const holes = [...$('#cdHoles').children].map((r) => ({ par: +r.querySelector('.cdPar').value, len: Math.max(60, Math.min(560, +r.querySelector('.cdLen').value || 300)), shape: r.querySelector('.cdShape').value, water: r.querySelector('.cdWater').value }));
   if (!holes.length) { toast('Add at least one hole'); return; }
   const name = ($('#cdName').value || 'My course').trim().slice(0, 30);
@@ -2273,6 +2327,7 @@ function roundCardHtml() {
   let h = `<h3>Play a round</h3><div class="summary"><div class="sub" style="margin-bottom:8px">Pick a course, then choose how to play. <b>Arcade</b>: play on the phone like a game. Choose a club, tap for power and aim, and putt out yourself. <b>At my net</b>: hit real shots and the app flies each one down the hole; putting is worked out for you.</div>
     <select id="rcCourse">${opts}</select>
     <div class="ctrl" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${round ? '<button class="btn primary" id="rcResume">Back to my round ›</button>' : ''}<button class="btn ${round ? '' : 'primary'}" id="rcArcade">🎮 Play on phone (arcade)</button><button class="btn" id="rcStart">🏌️ Play at my net</button><button class="btn" id="rcDesign">＋ Design a course</button>${customCourses.length ? '<button class="btn ghost" id="rcDelete">Delete my chosen course</button>' : ''}</div></div>`;
+  h += badgesHtml();
   h += '<h3>My rounds</h3>';
   if (!rounds.length) h += '<div class="empty">No rounds yet.</div>';
   for (const r of rounds.slice(0, 10)) {

@@ -162,7 +162,7 @@ export class Course3D {
     const roll = 1.5 * Math.sin(x * 0.013 + this.ph) * Math.cos(z * 0.019 + 1.3) + 0.7 * Math.sin(x * 0.037 + z * 0.031 + this.ph * 2);
     let y = roll * (0.3 + 0.7 * smooth(h.fw / 2, 55, n.d));
     y += 5.5 * smooth(38, 95, n.d) * (0.7 + 0.3 * Math.sin(x * 0.021 + this.ph * 3)); // banks that frame the hole
-    const g = 1 - smooth(h.greenR, h.greenR + 16, dp); y = y * (1 - g) + 0.5 * g; // green: flat and slightly raised
+    const g = 1 - smooth(h.greenR, h.greenR + 16, dp); const sl = this.slope || { a: 0, g: 0 }; y = y * (1 - g) + (0.5 - (sl.g / 100) * ((x - pin.x) * Math.cos(sl.a) + (z - pin.z) * Math.sin(sl.a))) * g; // green: smooth, slightly raised, tilted
     const t = 1 - smooth(4, 12, Math.hypot(x - h.path[0].x, z - h.path[0].z)); y = y * (1 - t) + 0.35 * t; // tee
     for (const z0 of h.haz) {
       const d = Math.hypot(x - z0.x, z - z0.z);
@@ -173,7 +173,8 @@ export class Course3D {
   }
 
   // ---- build one hole
-  setHole(hole, seed = 1, theme = 'park') {
+  setHole(hole, seed = 1, theme = 'park', slope = { a: 0, g: 0 }) {
+    this.slope = slope;
     const TH = THEMES[theme] || THEMES.park;
     this.land.material.color.set(TH.land); this.hills.forEach((m, i) => m.material.color.set(TH.hills[i]));
     if (this.group) { this.scene.remove(this.group); this.group.traverse((o) => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } }); }
@@ -281,6 +282,16 @@ export class Course3D {
     for (const m of [trunks, b1, b2, cones]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; }
     // --- tee markers
     for (const s of [-1, 1]) { const mk = new T.Mesh(new T.SphereGeometry(0.09, 12, 8), new T.MeshLambertMaterial({ color: 0x1d6dff })); mk.position.set(tee.x + 0.6, this.hAt(tee.x, tee.z + s * 2.6) + 0.08, tee.z + s * 2.6); G.add(mk); }
+    // arrows on the green that point downhill (shown while putting)
+    this.marks = new T.Group(); this.marks.visible = false; G.add(this.marks);
+    if (slope.g >= 0.4) {
+      const tg = new T.BufferGeometry(); tg.setAttribute('position', new T.Float32BufferAttribute([0.45, 0, 0, -0.25, 0, 0.22, -0.25, 0, -0.22], 3));
+      const tm = new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: T.DoubleSide, depthWrite: false });
+      for (let gx = -hole.greenR; gx <= hole.greenR; gx += 2.6) for (let gz = -hole.greenR; gz <= hole.greenR; gz += 2.6) {
+        if (Math.hypot(gx, gz) > hole.greenR - 0.8 || Math.hypot(gx, gz) < 0.6) continue;
+        const m = new T.Mesh(tg, tm); m.position.set(pin.x + gx, this.hAt(pin.x + gx, pin.z + gz) + 0.04, pin.z + gz); m.rotation.y = -slope.a; m.scale.setScalar(0.5 + slope.g * 0.3); this.marks.add(m);
+      }
+    }
     // flag and cup
     const py = this.hAt(pin.x, pin.z); this.flag.position.set(pin.x, py, pin.z); this.cup.position.set(pin.x, py + 0.02, pin.z);
     // keep the far scenery centred on this hole
@@ -289,7 +300,7 @@ export class Course3D {
 
   // ---- where the camera sits for a ball at p, aimed at aim
   pose(p, aim, close) {
-    if (close) { const d = Math.hypot(aim.x - p.x, aim.z - p.z) || 1, ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, by = this.hAt(p.x, p.z), b = clamp(d * 0.45 + 2.2, 2.6, 5.5); return { p: new T.Vector3(p.x - ux * b, by + 1.2 + b * 0.22, p.z - uz * b), l: new T.Vector3(aim.x, this.hAt(aim.x, aim.z) + 0.2, aim.z) }; }
+    if (close) { const d = Math.hypot(aim.x - p.x, aim.z - p.z) || 1, ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, by = this.hAt(p.x, p.z), b = clamp(d * 0.45 + 3.6, 4.2, 7); return { p: new T.Vector3(p.x - ux * b + uz * 0.5, by + 1.5 + b * 0.25, p.z - uz * b - ux * 0.5), l: new T.Vector3(aim.x, this.hAt(aim.x, aim.z) + 0.2, aim.z) }; }
     const d = Math.hypot(aim.x - p.x, aim.z - p.z) || 1, ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, by = this.hAt(p.x, p.z);
     const cx = p.x - ux * 8, cz = p.z - uz * 8;
     return { p: new T.Vector3(cx, Math.max(this.hAt(cx, cz) + 1.8, by + 3.3), cz), l: new T.Vector3(p.x + ux * 45, by + 1.2, p.z + uz * 45) };
@@ -304,7 +315,7 @@ export class Course3D {
 
   /** Show the ball waiting at p. ringAt = where the chosen club normally finishes (or null). */
   setState(p, aim, ringAt, glide = true, close = false, holed = false) {
-    this.holed = holed;
+    this.holed = holed; if (this.marks) this.marks.visible = close;
     this.aim = aim; this.rest = { p, aim, close };
     if (ringAt) { this.ringOn = true; this.ring.visible = true; this.ring.position.set(ringAt.x, this.hAt(ringAt.x, ringAt.z) + 0.3, ringAt.z); this.ring.scale.setScalar(clamp(Math.hypot(ringAt.x - p.x, ringAt.z - p.z) * 0.06, 2.5, 14)); } else { this.ringOn = false; this.ring.visible = false; }
     if (this.anim && this.anim.kind !== 'glide') return; // a shot is in the air: it will settle here when it finishes
