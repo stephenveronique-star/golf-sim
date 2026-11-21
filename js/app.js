@@ -6,7 +6,7 @@ import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } 
 import { loadThree, Course3D } from './course3d.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2127,7 +2127,7 @@ function view3d(h, animate) {
   const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : round.putting ? pin : aimPoint(h, round.p, suggestClub(1e9).longest);
   let ring = null;
   if (!round.done && !round.putting) { const L = Math.hypot(aim.x - round.p.x, aim.z - round.p.z) || 1, reach = clubAvg(S.club); ring = { x: round.p.x + ((aim.x - round.p.x) / L) * reach, z: round.p.z + ((aim.z - round.p.z) / L) * reach }; }
-  v3.setState(round.p, aim, ring, !fresh, !!round.putting);
+  v3.setState(round.p, aim, ring, !fresh, !!round.putting, !!round.done);
   if (animate && round.last) { // keep the result back until the ball has landed
     const m = $('#rhMsg'), i = $('#rhInfo'), mt = m.textContent, it = i.textContent, nx = $('#rhNext').hidden; m.textContent = 'Ball in the air…'; $('#rhNext').hidden = true;
     const go = round.last.putt ? (o) => v3.roll(round.last.from, round.last.to, o) : (o) => v3.fly(round.last.from, round.last.to, o);
@@ -2341,6 +2341,6 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 setInterval(() => { if (!document.hidden && eng.state !== 'armed') checkForUpdate(); }, 10 * 60 * 1000);
 
 // expose for automated testing
-window.__golf = { simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
+window.__golf = { get v3() { return v3; }, simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
 $('#testSoundBtn').addEventListener('click', testSound);
 $('#cSound').addEventListener('click', testSound);
