@@ -3,9 +3,10 @@ import { RangeView } from './range.js';
 import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
 import { COURSES, buildCourse, playShot, pinOf, aimPoint, scoreName } from './round.js';
+import { loadThree, Course3D } from './course3d.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2042,6 +2043,7 @@ function roundShot(shot) {
   const h = c.holes[round.i];
   const r = playShot(h, { p: round.p, strokes: round.strokes }, { total: shot.total, offline: shot.offline, reach: suggestClub(1e9).longest });
   round.trail.push({ ...r.to, bad: !!r.penalty }); if (r.penalty) round.trail.push({ ...r.from });
+  round.last = { from: r.from, to: r.to, penalty: !!r.penalty, done: !!r.done, apex: shot.apex };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; if (shot.sim) round.sim = true;
   if (r.done) {
     round.done = true; round.scores[round.i] = r.strokes;
@@ -2072,7 +2074,7 @@ function simShot() {
 function renderRound(animate) {
   const on = !!round; document.body.dataset.round = on ? 'on' : 'off';
   $('#holeCanvas').hidden = !on; $('#roundHud').hidden = !on;
-  if (!on) return;
+  if (!on) { $('#v3wrap').hidden = true; document.body.dataset.v3 = 'off'; if (v3) v3.stop(); return; }
   const c = roundCourse(); if (!c) { endRound(false); return; }
   const h = c.holes[round.i], pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
   const soFar = round.scores.reduce((a, b) => a + (b || 0), 0), parSoFar = c.holes.slice(0, round.scores.filter((x) => x != null).length).reduce((a, x) => a + x.par, 0);
@@ -2086,7 +2088,32 @@ function renderRound(animate) {
   $('#rhBag').value = S.club;
   $('#rhClub').textContent = S.club === sc.id ? `${sc.name}${sc.partial ? ' — easy swing' : ''} ✓` : `Use ${sc.name}${sc.partial ? ' (easy swing)' : ''}`;
   $('#rhClub').dataset.club = sc.id;
+  view3d(h, animate);
   drawHole(h, animate);
+}
+// ---- the 3D view from behind the ball (falls back to the flat map if the phone can't do 3D)
+let v3 = null, v3state = 'none', v3hole = '';
+function view3d(h, animate) {
+  if (v3state === 'none') {
+    v3state = 'loading';
+    loadThree().then(() => { v3 = new Course3D($('#hole3d'), $('#pinTag')); v3state = 'on'; log('3D course view ready'); if (round) renderRound(); })
+      .catch((e) => { v3state = 'off'; log(`3D course view not available: ${e.message}`); });
+    return;
+  }
+  if (v3state !== 'on') return;
+  document.body.dataset.v3 = 'on'; $('#v3wrap').hidden = false; v3.start(); v3.resize();
+  const key = `${round.courseId}:${round.i}`, fresh = v3hole !== key;
+  if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed); v3hole = key; }
+  const pin = pinOf(h), prev = h.path[h.path.length - 2], d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
+  $('#pinTag').textContent = round.done ? '' : `${fmtDist(d)} ${dUnit()}`;
+  const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : aimPoint(h, round.p, suggestClub(1e9).longest);
+  let ring = null;
+  if (!round.done) { const L = Math.hypot(aim.x - round.p.x, aim.z - round.p.z) || 1, reach = clubAvg(S.club); ring = { x: round.p.x + ((aim.x - round.p.x) / L) * reach, z: round.p.z + ((aim.z - round.p.z) / L) * reach }; }
+  v3.setState(round.p, aim, ring, !fresh);
+  if (animate && round.last) { // keep the result back until the ball has landed
+    const m = $('#rhMsg'), i = $('#rhInfo'), mt = m.textContent, it = i.textContent, nx = $('#rhNext').hidden; m.textContent = 'Ball in the air…'; $('#rhNext').hidden = true;
+    v3.fly(round.last.from, round.last.to, { apex: round.last.apex, done: round.last.done, penalty: round.last.penalty, then: () => { if (round && m.textContent === 'Ball in the air…') { m.textContent = mt; i.textContent = it; $('#rhNext').hidden = nx; } } });
+  }
 }
 let holeAnim = 0;
 function drawHole(h, animate) {
@@ -2096,7 +2123,7 @@ function drawHole(h, animate) {
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const xs = h.path.map((p) => p.x), zs = h.path.map((p) => p.z);
   const x0 = Math.min(...xs) - 30, x1 = Math.max(...xs) + 30, z0 = Math.min(...zs, 0) - 50, z1 = Math.max(...zs, 0) + 50;
-  const padT = 14, padB = 96, k = Math.min((W - 24) / (x1 - x0), (H - padT - padB) / (z1 - z0));
+  const mini = document.body.dataset.v3 === 'on', padT = mini ? 5 : 14, padB = mini ? 5 : 96, k = Math.min((W - 24) / (x1 - x0), (H - padT - padB) / (z1 - z0));
   const ox = (W - (x1 - x0) * k) / 2, oy = padT + (H - padT - padB - (z1 - z0) * k) / 2;
   const X = (p) => ox + (p.x - x0) * k, Y = (p) => oy + (p.z - z0) * k;
   ctx.fillStyle = '#000307'; ctx.fillRect(0, 0, W, H);
@@ -2144,6 +2171,7 @@ function drawHole(h, animate) {
   holeAnim = requestAnimationFrame(step);
 }
 window.addEventListener('resize', () => { if (round) renderRound(); });
+window.addEventListener('orientationchange', () => setTimeout(() => { if (round) renderRound(); }, 400));
 // ---- playing on the phone (no net): pick a club, then two taps — power, then aim
 const meter = { phase: 0, t0: 0, power: 0, raf: 0 };
 function meterPos(now) { const period = meter.phase === 1 ? 1500 : 1000, u = ((now - meter.t0) % (period * 2)) / period; return u <= 1 ? u : 2 - u; } // 0..1..0
