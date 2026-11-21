@@ -228,7 +228,8 @@ export class Course3D {
   }
 
   // ---- where the camera sits for a ball at p, aimed at aim
-  pose(p, aim) {
+  pose(p, aim, close) {
+    if (close) { const d = Math.hypot(aim.x - p.x, aim.z - p.z) || 1, ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, by = this.hAt(p.x, p.z), b = clamp(d * 0.45 + 2.2, 2.6, 5.5); return { p: new T.Vector3(p.x - ux * b, by + 1.2 + b * 0.22, p.z - uz * b), l: new T.Vector3(aim.x, this.hAt(aim.x, aim.z) + 0.2, aim.z) }; }
     const d = Math.hypot(aim.x - p.x, aim.z - p.z) || 1, ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, by = this.hAt(p.x, p.z);
     const cx = p.x - ux * 8, cz = p.z - uz * 8;
     return { p: new T.Vector3(cx, Math.max(this.hAt(cx, cz) + 1.8, by + 3.3), cz), l: new T.Vector3(p.x + ux * 45, by + 1.2, p.z + uz * 45) };
@@ -236,12 +237,12 @@ export class Course3D {
   placeBall(p, lift = 0) { const y = this.hAt(p.x, p.z); this.ball.position.set(p.x, y + 0.05 + lift, p.z); this.shadow.position.set(p.x, y + 0.03, p.z); this.bp = { x: p.x, z: p.z }; }
 
   /** Show the ball waiting at p. ringAt = where the chosen club normally finishes (or null). */
-  setState(p, aim, ringAt, glide = true) {
-    this.aim = aim; this.rest = { p, aim };
+  setState(p, aim, ringAt, glide = true, close = false) {
+    this.aim = aim; this.rest = { p, aim, close };
     if (ringAt) { this.ringOn = true; this.ring.visible = true; this.ring.position.set(ringAt.x, this.hAt(ringAt.x, ringAt.z) + 0.3, ringAt.z); this.ring.scale.setScalar(clamp(Math.hypot(ringAt.x - p.x, ringAt.z - p.z) * 0.06, 2.5, 14)); } else { this.ringOn = false; this.ring.visible = false; }
-    if (this.anim && this.anim.kind === 'fly') return; // a shot is in the air: it will settle here when it finishes
+    if (this.anim && this.anim.kind !== 'glide') return; // a shot is in the air: it will settle here when it finishes
     this.placeBall(p); this.trail.visible = false;
-    const to = this.pose(p, aim);
+    const to = this.pose(p, aim, close);
     if (!glide) { this.camP.copy(to.p); this.camL.copy(to.l); } else this.anim = { kind: 'glide', t: 0, dur: 1.1, p0: this.camP.clone(), l0: this.camL.clone(), to };
   }
 
@@ -251,6 +252,25 @@ export class Course3D {
     this.trailPts = []; this.trail.visible = true; this.ring.visible = false;
     this.anim = { kind: 'fly', t: 0, from, to, dist, apex: o.apex || clamp(dist * 0.17, 1.5, 38), dur: clamp(1.4 + dist / 52, 1.7, 5.6), carry: o.penalty ? 1 : 0.93,
       done: !!o.done, penalty: !!o.penalty, then: o.then, cam0: this.camP.clone(), phase: 0 };
+  }
+
+  /** Roll a putt from → to. o: { done (it dropped), then() } */
+  roll(from, to, o = {}) {
+    const dist = Math.hypot(to.x - from.x, to.z - from.z);
+    this.trail.visible = false; this.anim = { kind: 'roll', t: 0, from, to, dur: clamp(0.9 + dist * 0.22, 1, 3.4), done: !!o.done, then: o.then, end: false };
+  }
+  stepRoll(a, dt) {
+    a.t += dt;
+    if (!a.end) {
+      const u = Math.min(1, a.t / a.dur), s = 1 - (1 - u) * (1 - u), x = a.from.x + (a.to.x - a.from.x) * s, z = a.from.z + (a.to.z - a.from.z) * s, y = this.hAt(x, z);
+      this.ball.position.set(x, y + 0.05 - (a.done && u > 0.96 ? 0.13 : 0), z); this.shadow.position.set(x, y + 0.03, z); this.bp = { x, z };
+      this.camL.lerp(new T.Vector3((x + this.flag.position.x) / 2, y + 0.2, (z + this.flag.position.z) / 2), 1 - Math.pow(0.05, dt));
+      if (u >= 1) { a.end = true; a.t = 0; }
+    } else if (a.t > 0.7) {
+      this.anim = null;
+      if (!a.done && this.rest) { this.placeBall(this.rest.p); this.anim = { kind: 'glide', t: 0, dur: 1, p0: this.camP.clone(), l0: this.camL.clone(), to: this.pose(this.rest.p, this.rest.aim, this.rest.close) }; }
+      a.then?.();
+    }
   }
 
   resize() {
@@ -272,7 +292,7 @@ export class Course3D {
       a.t += dt / a.dur; const k = ease(Math.min(1, a.t));
       this.camP.lerpVectors(a.p0, a.to.p, k); this.camL.lerpVectors(a.l0, a.to.l, k);
       if (a.t >= 1) this.anim = null;
-    } else if (a && a.kind === 'fly') this.stepFly(a, dt);
+    } else if (a && a.kind === 'fly') this.stepFly(a, dt); else if (a && a.kind === 'roll') this.stepRoll(a, dt);
     this.cam.position.copy(this.camP); this.cam.lookAt(this.camL);
     // flag: waves, and grows with distance so it can always be seen
     const fp = this.flag.position, fd = this.cam.position.distanceTo(fp); this.flag.scale.setScalar(clamp(fd / 34, 1, 9));
@@ -316,7 +336,7 @@ export class Course3D {
         if (this.rest) {
           let to2;
           if (a.done) { const pin = pinOf(this.hole), L = Math.hypot(pin.x - a.from.x, pin.z - a.from.z) || 1, back = Math.min(16, L * 0.8); to2 = this.pose({ x: pin.x - ((pin.x - a.from.x) / L) * back, z: pin.z - ((pin.z - a.from.z) / L) * back }, pin); to2.l.set(pin.x, this.hAt(pin.x, pin.z) + 1, pin.z); }
-          else { this.placeBall(this.rest.p); to2 = this.pose(this.rest.p, this.rest.aim); this.ring.visible = !!this.ringOn; }
+          else { this.placeBall(this.rest.p); to2 = this.pose(this.rest.p, this.rest.aim, this.rest.close); this.ring.visible = !!this.ringOn; }
           this.anim = { kind: 'glide', t: 0, dur: 1.3, p0: this.camP.clone(), l0: this.camL.clone(), to: to2 };
         }
         a.then?.(); return;
