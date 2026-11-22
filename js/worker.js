@@ -100,6 +100,7 @@ self.onmessage = (e) => {
       if (opts.autoFind != null) engine.opts.autoFind = opts.autoFind;
       engine.opts.ballDist = +opts.ballDist || 0;
       engine.opts.teeSpot = opts.teeSpot || null;
+      engine.opts.view = opts.view === 'dtl' ? 'dtl' : 'face'; engine.opts.camH = +opts.camH || 1;
       break;
     case 'track': readTrack(m.track); break;
     case 'frame': onVideoFrame(m.frame); break;

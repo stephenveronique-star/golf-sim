@@ -224,7 +224,8 @@ export function findMovers(prev, cur, next, w, h, tee, opts = {}) {
   }
   const blobs = [];
   const stack = [];
-  const minArea = Math.max(2, Math.round(0.12 * Math.PI * d * d / 4));
+  const behind = !!opts.behind; // phone behind the ball: the ball flies up the picture and shrinks
+  const minArea = Math.max(2, Math.round((behind ? 0.03 : 0.12) * Math.PI * d * d / 4));
   for (let start = 0; start < mask.length; start++) {
     if (mask[start] !== 1) continue;
     let area = 0, peak = 0, minx = w, maxx = 0, miny = h, maxy = 0;
@@ -257,10 +258,15 @@ export function findMovers(prev, cur, next, w, h, tee, opts = {}) {
     const dx = mo.cx - tee.x, dy = tee.y - mo.cy;
     const dist = Math.hypot(dx, dy);
     if (dist < d * 0.9) continue;
-    const elev = Math.atan2(dy, Math.abs(dx)) * DEG;
-    if (elev < -12 || elev > 72) continue;
-    if (mo.minor < d * 0.4 || mo.minor > d * 2.2) continue;
-    if (mo.major > d * 18) continue;
+    if (behind) {
+      if (dy < d * 0.9 || Math.abs(dx) > dy * 1.2 + d) continue; // above the ball, inside a cone
+      if (mo.minor < d * 0.18 || mo.minor > d * 1.8 || mo.major > d * 14) continue;
+    } else {
+      const elev = Math.atan2(dy, Math.abs(dx)) * DEG;
+      if (elev < -12 || elev > 72) continue;
+      if (mo.minor < d * 0.4 || mo.minor > d * 2.2) continue;
+      if (mo.major > d * 18) continue;
+    }
     // a streak must point back toward the tee
     const elong = mo.major / mo.minor;
     if (elong > 1.7) {
@@ -439,6 +445,116 @@ export function solveShot(track, tee, cam) {
   };
 }
 
+// ================================================= behind-the-ball view
+// The phone sits behind the ball looking down the target line. The ball flies
+// away from the camera: in the picture it climbs from the tee towards one
+// point (the direction it is travelling in), quickly at first and then slower
+// as it gets further away. Where that point is gives direction and launch;
+// how fast the ball closes on it gives speed.
+
+/** picture position at time t for P = [Vx, Vy, s, t0] */
+function behindAt(P, tee, f, Zt, t) {
+  const tau = t - P[3];
+  if (tau <= 0) return { x: tee.x, y: tee.y, lam: 0 };
+  const k = P[2] * tau, lam = k / (1 + k);
+  return { x: tee.x + lam * (P[0] - tee.x), y: tee.y + lam * (P[1] - tee.y) + (f * 4.905 * tau * tau) / (Zt * (1 + k)), lam };
+}
+
+function nelderMead(fn, x0, steps, iters = 160) {
+  const n = x0.length;
+  let S = [x0.slice()];
+  for (let i = 0; i < n; i++) { const p = x0.slice(); p[i] += steps[i]; S.push(p); }
+  let F = S.map(fn);
+  for (let it = 0; it < iters; it++) {
+    const ord = F.map((v, i) => i).sort((a, b) => F[a] - F[b]);
+    S = ord.map((i) => S[i]); F = ord.map((i) => F[i]);
+    const c = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) c[j] += S[i][j] / n;
+    const at = (k) => c.map((v, j) => v + k * (S[n][j] - v));
+    const r = at(-1), fr = fn(r);
+    if (fr < F[0]) { const e = at(-2), fe = fn(e); if (fe < fr) { S[n] = e; F[n] = fe; } else { S[n] = r; F[n] = fr; } }
+    else if (fr < F[n - 1]) { S[n] = r; F[n] = fr; }
+    else {
+      const k = at(0.5), fk = fn(k);
+      if (fk < F[n]) { S[n] = k; F[n] = fk; }
+      else { for (let i = 1; i <= n; i++) { S[i] = S[i].map((v, j) => S[0][j] + 0.5 * (v - S[0][j])); F[i] = fn(S[i]); } }
+    }
+  }
+  let b = 0; for (let i = 1; i <= n; i++) if (F[i] < F[b]) b = i;
+  return { x: S[b], f: F[b] };
+}
+
+/**
+ * Pick the detections that fit a ball flying away from the camera.
+ * o: { f (focal length, px), Zt (camera-to-ball depth, m), tLo, fps }
+ */
+export function fitTrackBehind(frames, tee, o) {
+  const d = tee.d, { f, Zt } = o, dt = 1 / (o.fps || 60);
+  let best = null, work = 0;
+  for (let i = 0; i < frames.length; i++) for (const a of frames[i].blobs) {
+    const ax = a.x - tee.x, ay = a.y - tee.y, ra = Math.hypot(ax, ay);
+    if (ra < d * 1.5) continue;
+    for (let j = i + 1; j < Math.min(frames.length, i + 4); j++) for (const b of frames[j].blobs) {
+      const bx = b.x - tee.x, by = b.y - tee.y, rb = Math.hypot(bx, by);
+      if (rb < ra * 1.04) continue;
+      if (Math.abs(ax * by - ay * bx) / rb > Math.max(1.5 * d, 0.05 * rb)) continue; // both on one line from the tee
+      const ta = frames[i].t, tb = frames[j].t, tLo = Math.max(o.tLo ?? -Infinity, ta - 4 * dt);
+      for (let q = 0; q <= 12; q++) {
+        if (++work > 250000) return best;
+        const t0 = tLo + ((ta - 0.05 * dt - tLo) * q) / 12, t1 = ta - t0, t2 = tb - t0;
+        if (t1 <= 0) continue;
+        const s = (rb * t1 - ra * t2) / (t1 * t2 * (ra - rb));
+        if (!(s > 0)) continue;
+        const v = s * Zt; if (v < 3 || v > 95) continue;
+        const M = (ra * (s * t1 + 1)) / (s * t1); if (M > 3 * f) continue;
+        const P = [tee.x + (ax / ra) * M, tee.y + (ay / ra) * M, s, t0], pts = [];
+        for (let k = 0; k < frames.length; k++) {
+          const tk = frames[k].t; if (tk <= t0) continue;
+          const p = behindAt(P, tee, f, Zt, tk), tol = Math.max(1.5 * d, 0.05 * M * p.lam);
+          let bb = null, bd = tol;
+          for (const c of frames[k].blobs) { const e = Math.hypot(c.x - p.x, c.y - p.y); if (e < bd) { bd = e; bb = c; } }
+          if (bb) pts.push({ ...bb, t: tk, err: bd });
+        }
+        if (pts.length < 2) continue;
+        // with only two sightings any strike moment fits, so lean towards the middle of the gap
+        const score = pts.length * 10 - pts.reduce((u, p) => u + p.err, 0) / pts.length / d - Math.abs(q - 6) * 0.02;
+        if (!best || score > best.score) best = { score, pts, P, tLo, tHi: pts[0].t };
+      }
+    }
+  }
+  if (!best) return null;
+  // polish the fit on the chosen detections
+  const { pts, tLo, tHi } = best, d2 = d * d;
+  const cost = (P) => {
+    if (!(P[2] > 0)) return 1e12;
+    let e = 0; for (const p of pts) { const m = behindAt(P, tee, f, Zt, p.t); e += (m.x - p.x) ** 2 + (m.y - p.y) ** 2; }
+    if (P[3] > tHi) e += 1e4 * d2 * ((P[3] - tHi) / dt) ** 2; if (P[3] < tLo) e += 1e4 * d2 * ((tLo - P[3]) / dt) ** 2;
+    return e;
+  };
+  const r = pts.length >= 3 ? nelderMead(cost, best.P, [d * 3, d * 3, best.P[2] * 0.15, dt * 0.2]) : { x: best.P, f: cost(best.P) };
+  return { score: best.score, pts, tImp: r.x[3], V: { x: r.x[0], y: r.x[1] }, s: r.x[2], residual: Math.sqrt(r.f / pts.length) };
+}
+
+/** Launch numbers from a behind-view fit. cam: { w, h, hfovDeg, ballDist, camH } */
+export function solveShotBehind(track, tee, cam) {
+  const f = (cam.w / 2) / Math.tan((cam.hfovDeg * Math.PI) / 360), cx = cam.w / 2, cy = cam.h / 2;
+  const Z0 = cam.ballDist > 0.5 ? cam.ballDist : (f * BALL.diameter) / tee.d; // phone to ball, in a straight line
+  const tx = tee.x - cx, ty = tee.y - cy, Zt = (Z0 * f) / Math.hypot(tx, ty, f);
+  // how far the camera is tipped down, from its height and how low the ball sits in the picture
+  const hc = Math.min(Z0 * 0.95, cam.camH > 0.05 ? cam.camH : 1), tip = Math.atan2(hc, Math.sqrt(Z0 * Z0 - hc * hc)) - Math.atan2(ty, Math.hypot(f, tx));
+  const right = track.V.x - tee.x, upC = -(track.V.y - cy);
+  const up = upC * Math.cos(tip) - f * Math.sin(tip), fwd = f * Math.cos(tip) + upC * Math.sin(tip);
+  const vAxis = track.s * Zt; // speed along the way the camera points
+  return {
+    speed: (vAxis / f) * Math.hypot(right, upC, f), launch: Math.atan2(up, Math.hypot(fwd, right)) * DEG, direction: Math.atan2(right, fwd) * DEG,
+    targetSign: 0, distanceToBall: Z0, points: track.pts.length, residual: track.residual, view: 'dtl', tipDeg: tip * DEG,
+  };
+}
+export function behindDepth(tee, cam) {
+  const f = (cam.w / 2) / Math.tan((cam.hfovDeg * Math.PI) / 360), Z0 = cam.ballDist > 0.5 ? cam.ballDist : (f * BALL.diameter) / tee.d;
+  return { f, Zt: (Z0 * f) / Math.hypot(tee.x - cam.w / 2, tee.y - cam.h / 2, f) };
+}
+
 // --------------------------------------------------------------- engine
 /**
  * ShotEngine: feed it frames; it arms on the ball, notices when the ball is
@@ -583,12 +699,13 @@ export class ShotEngine {
   _analyse() {
     if (this.opts.snapTimes !== false) this._snapTimes();
     const onsetIdx = this.buf.indexOf(this.onset);
-    const b = this.ball;
+    const b = this.ball, behind = this.opts.view === 'dtl';
+    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH };
     const i0 = Math.max(1, onsetIdx - 3);
     const i1 = Math.min(this.buf.length - 2, onsetIdx + Math.max(8, Math.round(this.fps * 0.15)));
     const frames = [];
     for (let i = i0; i <= i1; i++) {
-      const blobs = findMovers(this.buf[i - 1].g, this.buf[i].g, this.buf[i + 1].g, this.w, this.h, b, { threshold: this.opts.threshold });
+      const blobs = findMovers(this.buf[i - 1].g, this.buf[i].g, this.buf[i + 1].g, this.w, this.h, b, { threshold: this.opts.threshold, behind });
       frames.push({ t: this.buf[i].t, blobs, idx: i });
     }
     // impact can't be before the last frame that clearly showed the ball
@@ -596,7 +713,7 @@ export class ShotEngine {
     const tMin = this.lastPresentT != null ? Math.min(this.lastPresentT, before.t) - 0.5 / this.fps : -Infinity;
     const fullCounts = frames.map((f) => f.blobs.totalCount ?? f.blobs.length).sort((p, q) => p - q);
     const wholePictureMoved = fullCounts.length && fullCounts[fullCounts.length >> 1] > (this.opts.shakeLimit ?? 120);
-    const track = wholePictureMoved ? null : fitTrack(frames, b, { tMinImpact: tMin });
+    const track = wholePictureMoved ? null : behind ? fitTrackBehind(frames, b, { ...behindDepth(b, cam), tLo: tMin, fps: this.fps }) : fitTrack(frames, b, { tMinImpact: tMin });
     // snapshot of the frames used, for replay
     const snap = this.buf.slice(Math.max(0, i0 - 1), i1 + 2).map((f) => ({ t: f.t, g: f.g.slice() }));
     this.state = 'waiting';
@@ -617,10 +734,10 @@ export class ShotEngine {
     let ev;
     if (shaken || medMoving > (this.opts.shakeLimit ?? 120)) {
       ev = { type: 'moved', tNow: this.latest().t, tOnset, moving: frames.map((f) => f.blobs.totalCount ?? f.blobs.length), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
-    } else if (!track) {
-      ev = { type: 'missed', tNow: this.latest().t, tOnset, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
+    } else if (!track || (behind && track.pts.length < 3)) { // from behind, two sightings can't give a speed
+      ev = { type: 'missed', brief: !!track, tNow: this.latest().t, tOnset, reason: 'ball-not-found', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h };
     } else {
-      const launch = solveShot(track, b, { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist });
+      const launch = behind ? solveShotBehind(track, b, cam) : solveShot(track, b, cam);
       if (launch.launch < -3 || launch.launch > 62 || launch.speed > 95) { ev = { type: 'missed', tNow: this.latest().t, tOnset, reason: 'implausible', moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h }; this.onEvent(ev); return ev; }
       ev = { type: 'shot', tNow: this.latest().t, tOnset, launch, track, moving: frames.map((f) => f.blobs.length), frames: snap, tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
     }

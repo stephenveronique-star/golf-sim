@@ -6,7 +6,7 @@ import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } 
 import { loadThree, Course3D } from './course3d.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.5.0';
+const VERSION = '2.6.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -17,7 +17,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -289,7 +289,7 @@ const pending = new Map();
 // In dim light the ball looks smaller than it is, so its size can't be trusted for distance.
 function isDim() { return (eng.fps || 60) < 50; }
 function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : 0; }
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null } }); }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1 } }); }
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
@@ -360,8 +360,9 @@ function onEngineEvent(ev) {
     if (firstArm && $('#setup').classList.contains('show')) { firstArm = false; setTimeout(() => closeSetup(), 1800); }
     // the automatic replay steps out of the way when the next ball is ready
     if (P.auto && $('#swingsSheet').classList.contains('show')) closeAutoReplay();
-  } else if ((ev.type === 'shot' || ev.type === 'missed') && S.view === 'dtl') {
-    // filmed from behind: no ball numbers, just the swing
+  } else if (ev.type === 'missed' && S.view === 'dtl') {
+    // filmed from behind and the ball wasn't followed: just the swing
+    toast(ev.brief ? 'The ball was only seen for a moment, too briefly to measure. More room between the ball and the net, and bright light, give the camera more to see. Your swing is still checked.' : 'Ball was struck but not seen in flight. Your swing is still checked.', 6000);
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     if ($('#setup').classList.contains('show')) closeSetup();
@@ -384,7 +385,7 @@ function onEngineEvent(ev) {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     const L = ev.launch;
-    log(`SHOT speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
+    log(`SHOT${L.view === 'dtl' ? ` (from behind, phone tipped down ${L.tipDeg.toFixed(1)}°)` : ''} speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) { const rec = recordShot(ev.launch); if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); }
   } else if (ev.type === 'moved') {
@@ -414,7 +415,7 @@ function onEngineEvent(ev) {
 function camConstraints(fps, devId) {
   const v = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: fps } };
   const id = devId || S.camId;
-  if (id) v.deviceId = { exact: id }; else v.facingMode = { ideal: 'environment' };
+  if (S.face === 'front' && !devId) v.facingMode = { ideal: 'user' }; else if (id) v.deviceId = { exact: id }; else v.facingMode = { ideal: 'environment' };
   return { audio: false, video: v };
 }
 
@@ -440,7 +441,7 @@ async function startCamera() {
   }
   // iPhone's default "Back Triple/Dual Camera" swaps lenses by itself, which
   // changes the field of view mid-session. Use the main "Back Camera" instead.
-  if (!S.camId && /triple|dual/i.test(stream.getVideoTracks()[0].label || '')) {
+  if (S.face !== 'front' && !S.camId && /triple|dual/i.test(stream.getVideoTracks()[0].label || '')) {
     try {
       const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
       const main = devs.find((d) => /^back camera$/i.test(d.label.trim()));
@@ -455,7 +456,8 @@ async function startCamera() {
   }
   // Wide lens (for a phone only about 2 m away): the 0.5x Ultra Wide camera,
   // analysed at full width so the ball stays big enough to follow.
-  if (S.lens === 'wide' && !S.camId) {
+  if (S.face === 'front') { S.hfov = 70; S.procW = '960'; sendConfig(); }
+  else if (S.lens === 'wide' && !S.camId) {
     try {
       const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
       const wide = devs.find((d) => /ultra\s*wide/i.test(d.label) && !/front/i.test(d.label));
@@ -716,6 +718,13 @@ function drawSetup() {
   }
   // where to put the ball: a band about a third of the way in, on the side away from the net,
   // so the player still fits and the ball's flight has most of the picture
+  if (S.view === 'dtl' && video.videoWidth >= video.videoHeight) { // behind the ball: ball low in the middle, target straight above it
+    const mx = fit.x + fit.w / 2, bw = 0.14 * fit.w, by = fit.y + 0.6 * fit.h, bh = 0.28 * fit.h;
+    ctx.setLineDash([4 * dpr, 6 * dpr]); ctx.strokeStyle = 'rgba(57,255,156,0.75)'; ctx.lineWidth = 1.5 * dpr; ctx.beginPath(); ctx.moveTo(mx, fit.y); ctx.lineTo(mx, fit.y + fit.h); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,122,26,0.10)'; ctx.fillRect(mx - bw / 2, by, bw, bh); ctx.strokeStyle = 'rgba(255,122,26,0.7)'; ctx.strokeRect(mx - bw / 2, by, bw, bh); ctx.setLineDash([]);
+    ctx.fillStyle = '#ff7a1a'; ctx.font = `600 ${12 * dpr}px 'Rajdhani', sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText('BALL HERE', mx, by + bh + 14 * dpr); ctx.fillStyle = '#39ff9c'; ctx.fillText('target on this line ↑', mx, fit.y + 16 * dpr); ctx.textAlign = 'left';
+  }
   if (S.view !== 'dtl' && video.videoWidth >= video.videoHeight) {
     const ts = targetSide(), x0 = ts > 0 ? 0.27 : 0.61, bx = fit.x + x0 * fit.w, bw = 0.12 * fit.w;
     ctx.fillStyle = 'rgba(255,122,26,0.10)'; ctx.fillRect(bx, fit.y, bw, fit.h);
@@ -819,7 +828,9 @@ function checkFraming(b) {
     const shift = (along - 0.33) * 2 * dist * Math.tan((+S.hfov * Math.PI) / 360);
     issues.push({ key: 'flight', say: `Move the phone about ${shift < 0.75 ? 'half a metre' : Math.round(shift) + (Math.round(shift) === 1 ? ' metre' : ' metres')} towards the net, so the camera sees more of the ball's flight.`, text: `The ball is ${Math.round(along * 100)}% of the way across the picture, so the camera only sees a short piece of its flight. Slide the phone about ${shift.toFixed(1)} m towards the net (keep it pointing straight at the player’s line) until the ball sits in the orange “BALL HERE” band on the camera screen.` });
   }
-  if (xf < 0.2 || xf > 0.8) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
+  if (S.view === 'dtl' && (xf < 0.36 || xf > 0.64)) issues.push({ key: 'centre', say: 'Move the phone so the ball is in the middle of the picture, with your target straight above it.', text: 'Phone behind the ball: the ball should be in the middle of the picture (in the orange box) with the target straight above it on the green line.' });
+  if (S.view === 'dtl' && b.y / eng.h < 0.5) issues.push({ key: 'high', say: 'Tip the phone up a little, so the ball is in the lower part of the picture.', text: 'Phone behind the ball: the ball should be in the lower part of the picture, so the camera can see it fly towards the net.' });
+  if (S.view !== 'dtl' && (xf < 0.2 || xf > 0.8)) issues.push({ key: 'edge', say: 'The ball is close to the edge of the picture. Move the phone so the ball is about a third of the way in.', text: `Ball is ${Math.round((xf < 0.5 ? xf : 1 - xf) * 100)}% from the edge of the picture — your swing goes out of view. Move the phone so the ball is about a third of the way in.` });
   framingIssue = issues.map((i) => i.key).join(',');
   if (!issues.length) return;
   log(`SET-UP WARNING ${issues.map((i) => i.text).join(' · ')}`);
@@ -1727,7 +1738,7 @@ function reportText(d) {
   }
   if (lastSwing) L.push(lastSwing.ok ? `last swing: tips ${lastSwing.tips.map((t) => t.key).join(', ') || 'none'} · body seen in ${lastSwing.used} pictures · scale ${lastSwing.scaleFrom}` : `last swing: not analysed (${lastSwing.reason})`);
   L.push(`motion sensor ${motionOn ? `on · tilt from ready position ${tiltDeg.toFixed(1)}°` : 'off (tilt warnings from the camera only)'}`);
-  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? 'behind' : 'facing'} · lens ${S.lens}`);
+  L.push(`swing tips ${S.tips} · height ${S.heightCm || 'not set'} · hand ${S.hand} · phone ${S.view === 'dtl' ? `behind the ball, ${S.camH} m high` : 'at the side'} · ${S.face} camera · lens ${S.lens}`);
   if (eng.ball && eng.w) L.push(`ball ${eng.ball.d.toFixed(1)} px ≈ ${ballDistance(eng.ball).toFixed(1)} m away · ${Math.round((eng.ball.x / eng.w) * 100)}% across the picture${framingIssue ? ' · SET-UP PROBLEM: ' + framingIssue : ''}`);
   L.push('log (newest last):');
   for (const l of LOG.slice(-60)) L.push('  ' + l);
@@ -1837,6 +1848,24 @@ $('#cLens').addEventListener('click', async () => {
   if (running) { await startCamera(); toast(S.lens === 'wide' ? 'Wide lens on — stand the phone about 2 m from the ball, then tap the ball' : 'Normal lens — stand the phone about 3 m from the ball, then tap the ball', 6000); }
 });
 renderLensChip();
+// where the phone stands, and which camera — chosen once on the set-up screen, then hands-free
+function renderViewChips() {
+  const v = $('#cView'), f = $('#cFace');
+  v.textContent = S.view === 'dtl' ? '📍 Phone BEHIND the ball (tap for at the side)' : '📍 Phone at the SIDE (tap for behind the ball)'; v.className = 'chip' + (S.view === 'dtl' ? ' on' : '');
+  f.textContent = S.face === 'front' ? '🤳 Front camera — you can see the screen (tap for back)' : '📷 Back camera (tap for front, to see the screen)'; f.className = 'chip' + (S.face === 'front' ? ' on' : '');
+}
+$('#cView').addEventListener('click', () => {
+  S.view = S.view === 'dtl' ? 'face' : 'dtl'; S.teeSpot = null; saidFraming.clear();
+  saveSettings(); sendConfig(); renderViewChips(); renderTeeChip(); renderSettings(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; log(`phone position set to ${S.view === 'dtl' ? 'behind the ball' : 'at the side'}`);
+  toast(S.view === 'dtl' ? 'Phone BEHIND the ball: stand it 3 m straight behind the ball, about 1 m high, pointing at your target. Put the ball in the orange box with the target on the green line. Direction is measured properly this way.' : 'Phone at the SIDE: stand it 3 m to the side of the ball, facing you.', 11000);
+});
+$('#cFace').addEventListener('click', async () => {
+  S.face = S.face === 'front' ? 'back' : 'front'; S.camId = ''; S.teeSpot = null;
+  if (S.face === 'back') { S.hfov = S.lens === 'wide' ? 106 : 67; S.procW = S.lens === 'wide' ? '1280' : '960'; }
+  saveSettings(); sendConfig(); renderViewChips(); renderTeeChip(); eng.ball = null; log(`camera set to ${S.face}`);
+  if (running) { await startCamera(); toast(S.face === 'front' ? 'Front camera on. You can now see the screen from where you stand. It is usually slower and less sharp than the back camera, so check the “Camera” number at the top says 60.' : 'Back camera on.', 9000); }
+});
+renderViewChips();
 $('#cTee').addEventListener('click', () => { if (!S.teeSpot) { toast('Tap your ball on the picture to save your tee spot'); return; } S.teeSpot = null; saveSettings(); sendConfig(); renderTeeChip(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; log('tee spot cleared'); toast('Tee spot cleared — put the ball down and tap it to save a new one'); });
 renderTeeChip();
 
@@ -2052,7 +2081,7 @@ function startRound(courseId, mode = 'range') {
   const c = allCourses().find((x) => x.id === courseId); if (!c) return;
   const h = buildCourse(c).holes[0];
   round = { courseId, name: c.name, i: 0, p: { ...h.path[0] }, strokes: 0, scores: [], trail: [{ ...h.path[0] }], done: false, msg: mode === 'arcade' ? 'Tee shot. Pick a club, then tap “Play shot”.' : 'Tee shot. Hit into your net, or tap “Play shot on phone”.', sim: false, mode, putting: false };
-  holeSetup(); saveRound(); log(`round started: ${c.name}`);
+  holeSetup(); saveRound(); log(`round started: ${c.name} (${mode})`); teeTalk();
   $('#start').classList.add('hide'); showSection('drive'); renderRound();
 }
 function endRound(save) {
@@ -2090,7 +2119,26 @@ function roundShot(shot) {
     round.msg = `${r.msg} ${nm ? nm + ' — ' : ''}${r.strokes} on a par ${h.par}.`;
     setTimeout(() => say(nm || 'Next hole'), shot.sim ? 300 : 3200);
   }
+  if (round.mode !== 'arcade' && !shot.sim) handsFree(h);
   saveRound(); renderRound(true);
+}
+// At the net nobody wants to walk to the phone between shots: pick the club, read out what's next and move to the next hole by itself.
+const unitWord = () => (S.dist === 'yd' ? 'yards' : 'metres');
+function handsFree(h) {
+  if (!round.done) {
+    const pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z), sc = suggestClub(d);
+    S.club = sc.id; saveSettings(); renderClubs();
+    setTimeout(() => say(`${fmtDist(d)} ${unitWord()} to the flag. ${sc.name}${sc.partial ? ', easy swing' : ''}.`), 5500);
+  } else {
+    const i = round.i, id = round.courseId;
+    setTimeout(() => { if (round && round.done && round.i === i && round.courseId === id) roundNext(); }, 11000);
+  }
+}
+function teeTalk() { // read out the new hole and choose the club for it
+  if (!round || round.mode === 'arcade') return;
+  const c = roundCourse(), h = c.holes[round.i], sc = suggestClub(h.len);
+  S.club = sc.id; saveSettings(); renderClubs();
+  setTimeout(() => say(`Hole ${round.i + 1}. Par ${h.par}. ${fmtDist(h.len)} ${unitWord()}. ${sc.name}.`), 900);
 }
 function roundPutt(pt) {
   if (!round || round.done || !round.putting) return;
@@ -2117,7 +2165,7 @@ function roundNext() {
   }
   round.i++; const h = c.holes[round.i];
   Object.assign(round, { p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, putting: false, last: null, msg: 'Tee shot.' });
-  holeSetup();
+  holeSetup(); teeTalk();
   saveRound(); renderRound();
 }
 function simShot() {
