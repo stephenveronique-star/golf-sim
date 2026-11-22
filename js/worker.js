@@ -5,7 +5,7 @@ import { ShotEngine, findBallCandidates } from './tracker.js';
 let opts = { hfovDeg: 67, threshold: 14, procW: 960 };
 const engine = new ShotEngine({ hfovDeg: opts.hfovDeg, threshold: opts.threshold });
 let canvas = null, ctx = null, gray = null;
-let procMs = 0, frames = 0, lastStatus = 0;
+let procMs = 0, frames = 0, lastStatus = 0, lastThumb = 0, tcv = null, tctx = null;
 let reader = null;
 
 // Small grey copies of the camera picture for the swing check (~10 a second,
@@ -46,13 +46,22 @@ function status(force) {
 
 function processSource(src, sw, sh, t) {
   const t0 = performance.now();
-  const W = Math.min(opts.procW, sw), H = Math.round((sh * W) / sw);
+  // the camera's own pictures can arrive turned compared with what is on screen; opts.rot says how far to turn them back
+  const rot = opts.rot || 0, side = rot === 90 || rot === 270, ow = side ? sh : sw, oh = side ? sw : sh;
+  const W = Math.min(opts.procW, ow), H = Math.round((oh * W) / ow);
   if (!canvas || canvas.width !== W || canvas.height !== H) {
     canvas = new OffscreenCanvas(W, H);
     ctx = canvas.getContext('2d', { willReadFrequently: true });
     gray = new Uint8Array(W * H);
   }
-  ctx.drawImage(src, 0, 0, W, H);
+  if (rot) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.translate(W / 2, H / 2); ctx.rotate((rot * Math.PI) / 180); if (side) ctx.drawImage(src, -H / 2, -W / 2, H, W); else ctx.drawImage(src, -W / 2, -H / 2, W, H); ctx.setTransform(1, 0, 0, 1, 0, 0); }
+  else ctx.drawImage(src, 0, 0, W, H);
+  if (t0 - lastThumb > 1000 && opts.thumbs) { // a tiny copy, as it arrived, so the page can check which way up it is
+    lastThumb = t0; const tw = sw >= sh ? 48 : 27, th = sw >= sh ? 27 : 48;
+    if (!tcv || tcv.width !== tw || tcv.height !== th) { tcv = new OffscreenCanvas(tw, th); tctx = tcv.getContext('2d', { willReadFrequently: true }); }
+    tctx.drawImage(src, 0, 0, tw, th); const td = tctx.getImageData(0, 0, tw, th).data, tg = new Uint8Array(tw * th); for (let i = 0, j = 0; j < tg.length; i += 4, j++) tg[j] = (td[i] + td[i + 1] * 2 + td[i + 2]) >> 2;
+    self.postMessage({ type: 'thumb', w: tw, h: th, g: tg, sw, sh });
+  }
   const d = ctx.getImageData(0, 0, W, H).data;
   for (let i = 0, j = 0; j < gray.length; i += 4, j++) gray[j] = ((d[i] * 3 + d[i + 1] * 2) * 51) >> 8;
   engine.pushFrame(gray, W, H, t);
@@ -73,7 +82,7 @@ function onVideoFrame(frame) {
 }
 
 let curTrack = null, readGen = 0;
-async function stopTrack() { readGen++; try { if (reader) await reader.cancel(); } catch { /* ignore */ } reader = null; try { curTrack && curTrack.stop(); } catch { /* ignore */ } curTrack = null; }
+async function stopTrack() { opts.thumbs = false; readGen++; try { if (reader) await reader.cancel(); } catch { /* ignore */ } reader = null; try { curTrack && curTrack.stop(); } catch { /* ignore */ } curTrack = null; }
 async function readTrack(track) {
   await stopTrack(); curTrack = track; const gen = readGen;
   if (typeof MediaStreamTrackProcessor === 'undefined') {
@@ -83,7 +92,7 @@ async function readTrack(track) {
   try {
     const proc = new MediaStreamTrackProcessor({ track });
     reader = proc.readable.getReader();
-    self.postMessage({ type: 'reading' });
+    self.postMessage({ type: 'reading' }); opts.thumbs = true;
     for (;;) {
       const { value, done } = await reader.read();
       if (done || gen !== readGen) { value && value.close && value.close(); break; }

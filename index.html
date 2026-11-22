@@ -475,6 +475,8 @@ body[data-play=arcade][data-v3=on] #holeCanvas { top: 56px; width: 34%; height: 
 .round-hud #rhBag { flex: 1; min-width: 0; font-size: 18px; padding: 10px 8px; border-radius: 6px; border-color: var(--cyan); text-align: center; text-align-last: center; }
 @media (max-height: 430px) and (orientation: landscape) { .round-hud .rh-b { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; } .rh-row1 { flex: 1 1 240px; } .round-hud .btn.big { width: auto; flex: 1 1 160px; padding: 9px; font-size: 16px; } .rh-row3 { flex: 0 0 auto; } }
 #voiceSel { font: inherit; width: 100%; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 8px; }
+#fpsTag { font-family: var(--data); font-size: 12px; } #fpsTag.bad { border-color: var(--bad); color: var(--bad); } #fpsTag.good { border-color: #39ff9c; color: #39ff9c; }
+body[data-play=arcade] #fpsTag { display: none; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -485,6 +487,7 @@ body[data-play=arcade][data-v3=on] #holeCanvas { top: 56px; width: 34%; height: 
     <button class="icon-btn" id="homeBtn" aria-label="Home" title="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg></button>
     <div class="sections" id="sections"><button data-sec="drive" class="on"><span class="my">My </span>Drive</button><button data-sec="info"><span class="my">My </span>Info</button><button data-sec="game"><span class="my">My </span>Game</button></div>
     <div class="pill off" id="status" title=""><i></i><span>Camera off</span></div>
+    <div class="pill drive-only" id="fpsTag" hidden title="Pictures the app gets from the camera each second. It needs 60."></div>
     <div class="spacer"></div>
     <button class="btn club-btn drive-only" id="clubBtn">7 Iron</button>
     <button class="btn drive-only" id="cameraBtn">Camera</button>
@@ -545,6 +548,7 @@ body[data-play=arcade][data-v3=on] #holeCanvas { top: 56px; width: 34%; height: 
       <button class="btn primary" id="startArcade">🎮 Arcade · play on my phone</button>
       <button class="btn primary" id="startCam">🏌️ Driving range · hit into my net</button>
       <button class="btn" id="startNet">⛳ Play a course at my net</button>
+      <button class="btn" id="startSwings">🎥 Film a swing · my swings</button>
       <div class="row2"><button class="btn" id="startInfo">My Info</button><button class="btn" id="startGame">My Game</button></div>
       <div class="row2"><button class="btn" id="startGuide">How to set up</button><button class="btn" id="startSettings">Settings</button></div>
     </div>

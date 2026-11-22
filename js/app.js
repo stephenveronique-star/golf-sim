@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.2';
+const VERSION = '3.3.3';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -334,21 +334,24 @@ const pending = new Map();
 // In dim light the ball looks smaller than it is, so its size can't be trusted for distance.
 function isDim() { return (eng.fps || 60) < 50; }
 function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : 0; }
-let camInfo = '', lastPortrait = null;
+let camInfo = '', capInfo = '', lastPortrait = null, capRot = 0, capT0 = 0, capFirst = false;
+const capNote = (t) => { capInfo += (capInfo ? ' · ' : '') + t; log(`capture: ${t}`); };
 // The lens angle in Settings is for the long side of the picture. With the phone upright the picture is narrow, so the angle across it is smaller.
 function effHfov() { const w = eng.w || video.videoWidth || 16, h = eng.h || video.videoHeight || 9; return h > w ? (2 * Math.atan(Math.tan((+S.hfov * Math.PI) / 360) * (w / h)) * 180) / Math.PI : +S.hfov; }
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: effHfov(), threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1 } }); }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: effHfov(), threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1, rot: capRot } }); }
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
   if (m.type === 'status') { Object.assign(eng, m); updateReady();
-    // safety: if the background reader's pictures come out turned the other way from the video, go back to the old way
-    if (mode === 'worker-track' && m.w && video.videoWidth && (m.w > m.h) !== (video.videoWidth > video.videoHeight)) { log(`background reader pictures are turned (${m.w}×${m.h} against video ${video.videoWidth}×${video.videoHeight}) — reading from the video instead`); worker.postMessage({ cmd: 'stopTrack' }); startVideoPath(); } const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
+    { const ft = $('#fpsTag'), f = Math.round(m.fps || 0); ft.hidden = !running || !f; ft.textContent = `${f} pictures a second`; ft.className = `pill drive-only ${f >= 50 ? 'good' : 'bad'}`; }
+    if (mode === 'worker-track' && m.frames && !capFirst) { capFirst = true; capNote(`first pictures after ${Math.round(performance.now() - capT0)} ms, ${m.w}×${m.h}`); }
+    if (mode === 'worker-track' && capFirst && m.fps && performance.now() - capT0 > 6000 && !/steady/.test(capInfo)) capNote(`steady at ${m.fps.toFixed(0)} a second`); const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
-  else if (m.type === 'reading') log('background reader is getting pictures straight from the camera');
-  else if (m.type === 'unsupported') { if (mode === 'worker-track') { log(`background reader not available here (${m.message || 'no support'}) — reading from the video instead`); startVideoPath(); } }
+  else if (m.type === 'reading') capNote('reader started');
+  else if (m.type === 'unsupported') { if (mode === 'worker-track') { capNote(`reader not available (${m.message || 'this iPhone does not offer it'}), using the video`); startVideoPath(); } }
+  else if (m.type === 'thumb') checkTurn(m);
   else if (m.type === 'error') { console.error('worker:', m.message); log(`ERROR worker: ${m.message}`); }
   else if (m.type === 'debug') { const r = pendingDebug.get(m.id); pendingDebug.delete(m.id); if (r) r(m); }
   else if (m.type === 'snaps') { const r = pendingSnaps.get(m.id); pendingSnaps.delete(m.id); if (r) r(m.frames); }
@@ -582,10 +585,29 @@ async function startCamera() {
   return true;
 }
 
+// Which way up are the background reader's pictures? Compare a tiny copy with the video on screen in all four turns.
+const tvc = document.createElement('canvas'), tvx = tvc.getContext('2d', { willReadFrequently: true });
+function checkTurn(m) {
+  if (mode !== 'worker-track' || !video.videoWidth) return;
+  const land = video.videoWidth >= video.videoHeight, vw = land ? 48 : 27, vh = land ? 27 : 48;
+  tvc.width = vw; tvc.height = vh; tvx.drawImage(video, 0, 0, vw, vh);
+  const vd = tvx.getImageData(0, 0, vw, vh).data, V = new Float32Array(vw * vh); for (let i = 0, j = 0; j < V.length; i += 4, j++) V[j] = (vd[i] + vd[i + 1] * 2 + vd[i + 2]) / 4;
+  const corr = (rot) => { // turn the reader's copy by rot and see how well it matches the video
+    const side = rot === 90 || rot === 270, ow = side ? m.h : m.w, oh = side ? m.w : m.h; if (ow !== vw || oh !== vh) return -2;
+    let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0; const n = vw * vh;
+    for (let y = 0; y < vh; y++) for (let x = 0; x < vw; x++) {
+      const sx = rot === 0 ? x : rot === 180 ? m.w - 1 - x : rot === 90 ? y : m.w - 1 - y, sy = rot === 0 ? y : rot === 180 ? m.h - 1 - y : rot === 90 ? m.h - 1 - x : x;
+      const a = m.g[sy * m.w + sx], b = V[y * vw + x]; sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
+    }
+    const va = saa - (sa * sa) / n, vb = sbb - (sb * sb) / n; return va > 1 && vb > 1 ? (sab - (sa * sb) / n) / Math.sqrt(va * vb) : -2;
+  };
+  const sc = [0, 90, 180, 270].map((r) => ({ r, c: corr(r) })).sort((a, b) => b.c - a.c);
+  if (sc[0].c > 0.45 && sc[0].c - (sc[1].c > -2 ? sc[1].c : 0) > 0.12 && sc[0].r !== capRot) { capNote(`pictures arrive turned; turning them ${sc[0].r}° to match the screen (match ${sc[0].c.toFixed(2)})`); capRot = sc[0].r; sendConfig(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; }
+}
 function startWorkerTrack(track) {
-  mode = 'worker-track';
-  try { const c = track.clone(); worker.postMessage({ cmd: 'track', track: c }, [c]); }
-  catch (e) { log(`couldn't hand the camera to the background reader (${e.name || e.message}) — reading from the video instead`); startVideoPath(); }
+  mode = 'worker-track'; capInfo = ''; capRot = 0; capT0 = performance.now(); capFirst = false; sendConfig();
+  try { const c = track.clone(); worker.postMessage({ cmd: 'track', track: c }, [c]); capNote('camera handed to the background reader'); }
+  catch (e) { capNote(`hand-over refused (${e.name || e.message}), using the video`); startVideoPath(); }
 }
 // Chrome: processor on the window, VideoFrames transferred to the worker.
 async function startMainProcessor(track) {
@@ -709,7 +731,8 @@ function startWatchdog() {
     if (document.hidden) { still = 0; return; }
     if (eng.frames === last) still++; else { still = 0; last = eng.frames; }
     if (still >= 3 && video.videoWidth) {
-      if (!switched && mode !== 'video') { switched = true; console.warn('no frames from', mode, '- switching to video'); log(`no frames from ${mode} — switched to video path`); startVideoPath(); still = 0; }
+      if (mode === 'worker-track' && still < 8) return; // the background reader can take a few seconds to start
+      if (!switched && mode !== 'video') { switched = true; try { worker.postMessage({ cmd: 'stopTrack' }); } catch { /* ignore */ } capNote(`no pictures from ${mode} after ${Math.round((performance.now() - capT0) / 1000)} s, using the video`); console.warn('no frames from', mode, '- switching to video'); log(`no frames from ${mode} — switched to video path`); startVideoPath(); still = 0; }
       else if (still === 6) log('STILL no frames reaching the tracker'), toast('The camera picture isn’t reaching the ball tracker. Close the app fully and open it again.', 6000);
     }
   }, 700);
@@ -1797,6 +1820,7 @@ function reportText(d) {
   L.push(`GOLF SIM REPORT · ${new Date().toLocaleString()}`);
   L.push(`version ${VERSION} · capture ${mode || 'not started'} · camera ${running ? 'on' : 'off'}`);
   if (camInfo) L.push(camInfo);
+  if (capInfo) L.push(`capture: ${capInfo}`);
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
   L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount} · detector restarts ${workerRestarts}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
@@ -2583,6 +2607,7 @@ function goHome() { closeSheets(); if ($('#setup').classList.contains('show')) c
 $('#homeBtn').addEventListener('click', goHome);
 $('#startResume').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('drive'); if (round) renderRound(); });
 $('#startNet').addEventListener('click', () => openPicker('range'));
+$('#startSwings').addEventListener('click', () => { openSwings(); toast('To film someone now, tap “＋ Add a video of another player”, then choose “Take Video”.', 7000); });
 $('#startSettings').addEventListener('click', () => { renderSettings(); openSheet('#settingsSheet'); });
 // ---- scorecard beside the course in arcade (the range numbers mean nothing there)
 function renderScore() {
