@@ -1,6 +1,7 @@
 // 3D view of a golf hole, seen from behind the ball. Built with three.js (loaded only when a round starts).
 // World: x runs from tee to green, z is sideways (+ = right of play), y is up. All in metres.
 import { nearest, pinOf } from './round.js';
+import { SWING, PUTT } from './mocap.js';
 
 let T = null;
 export async function loadThree() { if (!T) T = await import('./vendor/three.min.js'); return T; }
@@ -22,22 +23,6 @@ const SUN = { x: -0.45, y: 0.62, z: -0.64 }; // direction towards the sun
 
 // ---- the golfer: a simple jointed figure. Local frame: +x = towards the target, +z = the way the golfer faces (towards the ball).
 const lerp3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
-// swing key moments: t, hands, club head (relative to hands), shoulder turn (degrees), hip slide
-const KEYS = [
-  { t: 0.0, h: [0.02, 0.86, 0.40], c: [-0.02, -0.84, 0.44], turn: 0, hip: 0 },
-  { t: 0.22, h: [-0.42, 1.0, 0.36], c: [-0.85, 0.05, 0.3], turn: -35, hip: -0.02 },
-  { t: 0.45, h: [-0.34, 1.72, 0.02], c: [0.78, 0.38, -0.3], turn: -85, hip: -0.04 },
-  { t: 0.56, h: [-0.3, 1.2, 0.3], c: [-0.5, 0.75, 0.1], turn: -30, hip: 0.03 },
-  { t: 0.62, h: [0.06, 0.86, 0.40], c: [-0.06, -0.84, 0.44], turn: 15, hip: 0.06 },
-  { t: 0.72, h: [0.5, 1.05, 0.34], c: [0.85, 0.25, 0.2], turn: 55, hip: 0.08 },
-  { t: 1.0, h: [0.26, 1.7, -0.06], c: [-0.6, -0.25, -0.62], turn: 100, hip: 0.1 },
-];
-function swingAt(t) {
-  let i = 0; while (i < KEYS.length - 2 && t > KEYS[i + 1].t) i++;
-  const a = KEYS[i], b = KEYS[i + 1], k = ease(clamp((t - a.t) / (b.t - a.t), 0, 1));
-  const c = lerp3(a.c, b.c, k), L = Math.hypot(...c) || 1;
-  return { h: lerp3(a.h, b.h, k), c: c.map((v) => (v / L) * 0.95), turn: a.turn + (b.turn - a.turn) * k, hip: a.hip + (b.hip - a.hip) * k };
-}
 function buildGolfer() {
   const g = new T.Group(), mat = (c) => new T.MeshLambertMaterial({ color: c });
   const shirt = mat(0xff6a1f), trouser = mat(0x1b2740), skin = mat(0xd9a57e), white = mat(0xf5f5f5), steel = mat(0xcfd6dc), dark = mat(0x16181c), hair = mat(0x2a1c12);
@@ -56,24 +41,27 @@ function setLimb(o, a, b) {
   o.position.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2); o.scale.set(o.userData.r, L, o.userData.r);
   o.quaternion.setFromUnitVectors(new T.Vector3(UP.x, UP.y, UP.z), d.divideScalar(L));
 }
-export function poseGolfer(g, t) {
-  const P = g.userData.parts, s = swingAt(t), hx = s.hip;
-  const hip = [hx, 0.95, 0], neck = [hx * 0.6, 1.4, 0.25], a = (s.turn * Math.PI) / 180, sx = 0.21 * Math.cos(a), sz = -0.21 * Math.sin(a);
-  const shL = [neck[0] + sx, neck[1] - 0.03, neck[2] + sz], shR = [neck[0] - sx, neck[1] - 0.03, neck[2] - sz], head = [neck[0], 1.58, 0.33];
-  for (const [sd, sg] of [['L', 1], ['R', -1]]) { // legs with a little knee flex
-    const hp = [hx + sg * 0.1, 0.93, 0], ft = [sg * 0.22, 0.07, 0], kn = [(hp[0] + ft[0]) / 2 + sg * 0.02, 0.5, 0.1];
-    setLimb(P['thigh' + sd], hp, kn); setLimb(P['shin' + sd], kn, ft); P['knee' + sd].position.set(...kn); P['foot' + sd].position.set(ft[0], 0.04, 0.06);
+/** Pose the golfer from a recorded movement. clip = SWING or PUTT, fr = which picture (may be between two). */
+export function poseGolfer(g, clip, fr) {
+  const P = g.userData.parts, d = clip.d, f0 = Math.max(0, Math.min(clip.n - 1, Math.floor(fr))), f1 = Math.min(clip.n - 1, f0 + 1), k = Math.max(0, Math.min(1, fr - f0));
+  const pt = (j) => { const a = (f0 * 21 + j) * 3, b = (f1 * 21 + j) * 3; return [(d[a] + (d[b] - d[a]) * k) / 1000, (d[a + 1] + (d[b + 1] - d[a + 1]) * k) / 1000, (d[a + 2] + (d[b + 2] - d[a + 2]) * k) / 1000]; };
+  const hips = pt(0), spine = pt(1), neck = pt(2), head = pt(3), top = pt(4), shL = pt(5), elL = pt(6), waL = pt(7), shR = pt(8), elR = pt(9), waR = pt(10), grip = pt(19), ch = pt(20);
+  for (const [sd, o] of [['L', 11], ['R', 15]]) {
+    const hp = pt(o), kn = pt(o + 1), an = pt(o + 2), toe = pt(o + 3);
+    setLimb(P['thigh' + sd], hp, kn); setLimb(P['shin' + sd], kn, an); P['knee' + sd].position.set(...kn);
+    const ft = P['foot' + sd]; ft.position.set((an[0] + toe[0]) / 2, Math.max(0.045, (an[1] + toe[1]) / 2 - 0.03), (an[2] + toe[2]) / 2); ft.rotation.y = Math.atan2(toe[0] - an[0], toe[2] - an[2]);
   }
-  P.hips.position.set(...hip); P.hips.scale.set(0.19, 0.14, 0.15); P.belt.position.set(hip[0], hip[1] + 0.09, hip[2] + 0.02); P.belt.scale.set(0.175, 0.035, 0.14);
-  setLimb(P.torso, hip, neck); P.torso.scale.x = 0.19; setLimb(P.neck, neck, head);
-  P.chest.position.set(neck[0], neck[1] - 0.14, neck[2] - 0.05); P.chest.scale.set(0.2, 0.16, 0.14); P.chest.rotation.y = -a;
-  P.head.position.set(...head); P.hair.position.set(head[0], head[1] + 0.01, head[2] - 0.03); P.cap.position.set(head[0], head[1] + 0.06, head[2] + 0.02); P.brim.position.set(head[0], head[1] + 0.04, head[2] + 0.13);
+  const yaw = -Math.atan2(shL[2] - shR[2], shL[0] - shR[0]), face = [Math.sin(yaw), 0, Math.cos(yaw)]; // which way the chest points
+  P.hips.position.set(hips[0], hips[1] - 0.02, hips[2]); P.hips.scale.set(0.19, 0.14, 0.15); P.hips.rotation.y = yaw * 0.4;
+  P.belt.position.set(hips[0], hips[1] + 0.07, hips[2]); P.belt.scale.set(0.175, 0.035, 0.14); P.belt.rotation.y = yaw * 0.5;
+  setLimb(P.torso, hips, neck); P.torso.scale.x = 0.19; P.torso.rotation.y += 0; setLimb(P.neck, neck, head);
+  P.chest.position.set((spine[0] + neck[0]) / 2, (spine[1] + neck[1]) / 2 + 0.02, (spine[2] + neck[2]) / 2); P.chest.scale.set(0.2, 0.17, 0.14); P.chest.rotation.y = yaw;
+  const hc = [(head[0] + top[0]) / 2, (head[1] + top[1]) / 2 + 0.02, (head[2] + top[2]) / 2];
+  P.head.position.set(...hc); P.hair.position.set(hc[0] - face[0] * 0.03, hc[1] + 0.01, hc[2] - face[2] * 0.03); P.cap.position.set(hc[0] + face[0] * 0.02, hc[1] + 0.06, hc[2] + face[2] * 0.02); P.cap.rotation.y = yaw;
+  P.brim.position.set(hc[0] + face[0] * 0.13, hc[1] + 0.04, hc[2] + face[2] * 0.13); P.brim.rotation.y = yaw;
   P.shL.position.set(...shL); P.shR.position.set(...shR);
-  const elbow = (sh, bend) => { const m = lerp3(sh, s.h, 0.5); return [m[0] - bend * 0.12, m[1] - 0.06, m[2] - 0.04 + Math.abs(bend) * 0.05]; };
-  const eL = elbow(shL, t > 0.75 ? 1 : 0.15), eR = elbow(shR, t > 0.2 && t < 0.6 ? -1 : -0.15);
-  setLimb(P.armL, shL, eL); setLimb(P.foreL, eL, s.h); setLimb(P.armR, shR, eR); setLimb(P.foreR, eR, s.h); P.elbL.position.set(...eL); P.elbR.position.set(...eR);
-  P.hands.position.set(...s.h);
-  const ch = [s.h[0] + s.c[0], Math.max(0.03, s.h[1] + s.c[1]), s.h[2] + s.c[2]]; setLimb(P.club, s.h, ch); P.clubhead.position.set(...ch);
+  setLimb(P.armL, shL, elL); setLimb(P.foreL, elL, waL); setLimb(P.armR, shR, elR); setLimb(P.foreR, elR, waR); P.elbL.position.set(...elL); P.elbR.position.set(...elR);
+  P.hands.position.set(...grip); setLimb(P.club, grip, ch); P.clubhead.position.set(...ch);
 }
 
 // ---- simple animals built from boxes
@@ -182,7 +170,7 @@ export class Course3D {
     // landing ring: where the chosen club normally finishes
     const ring = new T.Mesh(new T.RingGeometry(0.86, 1, 48), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, side: T.DoubleSide, depthWrite: false, fog: false }));
     ring.rotation.x = -Math.PI / 2; ring.visible = false; this.scene.add(ring); this.ring = ring;
-    this.golfer = buildGolfer(); poseGolfer(this.golfer, 0); this.golfer.visible = false; this.scene.add(this.golfer);
+    this.golfer = buildGolfer(); poseGolfer(this.golfer, SWING, 0); this.golfer.visible = false; this.scene.add(this.golfer);
     // the other players' balls
     this.others = [0, 1, 2].map(() => { const m = new T.Mesh(new T.SphereGeometry(0.05, 14, 10), new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0x222222 })); m.visible = false; this.scene.add(m); return m; });
     // birds: a small flock that circles over the hole
@@ -383,10 +371,11 @@ export class Course3D {
     return { p: new T.Vector3(cx, Math.max(this.hAt(cx, cz) + 1.8, by + 3.3), cz), l: new T.Vector3(p.x + ux * 45, by + 1.2, p.z + uz * 45) };
   }
   /** stand the golfer at the ball, lined up on aim (right-handed) */
-  placeGolfer(p, aim, show = true) {
+  placeGolfer(p, aim, show = true, clip = SWING) {
     const d = Math.hypot(aim.x - p.x, aim.z - p.z); this.golfer.visible = show && d > 0.01; if (!this.golfer.visible) return;
     const ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, th = Math.atan2(-uz, ux), fx = Math.sin(th), fz = Math.cos(th);
-    this.golfer.rotation.y = th; this.golfer.position.set(p.x - fx * 0.86, this.hAt(p.x, p.z), p.z - fz * 0.86); poseGolfer(this.golfer, 0);
+    const bx = clip.ball[0], bz = clip.ball[1]; // where the ball sits relative to the golfer's feet in the recording
+    this.golfer.rotation.y = th; this.golfer.position.set(p.x - ux * bx - fx * bz, this.hAt(p.x, p.z), p.z - uz * bx - fz * bz); poseGolfer(this.golfer, clip, 0);
   }
   setPlayers(shirt, others = []) { // shirt colour of the player whose turn it is, and where the other balls lie
     this.golfer.userData.shirt.color.set(shirt);
@@ -415,7 +404,7 @@ export class Course3D {
     this.aim = aim; this.rest = { p, aim, close };
     if (ringAt) { this.ringOn = true; this.ring.visible = true; this.ring.position.set(ringAt.x, this.hAt(ringAt.x, ringAt.z) + 0.3, ringAt.z); this.ring.scale.setScalar(clamp(Math.hypot(ringAt.x - p.x, ringAt.z - p.z) * 0.06, 2.5, 14)); } else { this.ringOn = false; this.ring.visible = false; }
     if (this.anim && this.anim.kind !== 'glide') return; // a shot is in the air: it will settle here when it finishes
-    this.placeBall(p); this.trail.visible = false; this.placeGolfer(p, aim, !this.holed);
+    this.placeBall(p); this.trail.visible = false; this.placeGolfer(p, aim, !this.holed, close ? PUTT : SWING);
     const to = this.pose(p, aim, close);
     if (!glide) { this.camP.copy(to.p); this.camL.copy(to.l); } else this.anim = { kind: 'glide', t: 0, dur: 1.1, p0: this.camP.clone(), l0: this.camL.clone(), to };
   }
@@ -432,9 +421,12 @@ export class Course3D {
   /** Roll a putt from → to. o: { done (it dropped), then() } */
   roll(from, to, o = {}) {
     const dist = Math.hypot(to.x - from.x, to.z - from.z);
-    this.trail.visible = false; this.anim = { kind: 'roll', t: 0, from, to, dur: clamp(0.9 + dist * 0.22, 1, 3.4), done: !!o.done, then: o.then, ev: o.ev || (() => {}), end: false }; this.anim.ev('putt');
+    this.trail.visible = false; this.placeGolfer(from, pinOf(this.hole), true, PUTT);
+    this.anim = { kind: 'roll', t: 0, pre: 0, from, to, dur: clamp(0.9 + dist * 0.22, 1, 3.4), done: !!o.done, then: o.then, ev: o.ev || (() => {}), end: false, struck: false };
   }
   stepRoll(a, dt) {
+    if (!a.struck) { a.pre += dt * 1.4; const fr = a.pre * PUTT.fps; poseGolfer(this.golfer, PUTT, Math.min(PUTT.hit, fr)); if (fr >= PUTT.hit) { a.struck = true; a.ev('putt'); } return; }
+    a.pre += dt; poseGolfer(this.golfer, PUTT, Math.min(PUTT.n - 1, a.pre * PUTT.fps));
     a.t += dt;
     if (!a.end) {
       const u = Math.min(1, a.t / a.dur), s = 1 - (1 - u) * (1 - u), x = a.from.x + (a.to.x - a.from.x) * s, z = a.from.z + (a.to.z - a.from.z) * s, y = this.hAt(x, z);
@@ -444,7 +436,7 @@ export class Course3D {
     } else if (a.t > 0.7) {
       this.anim = null;
       if (a.done) this.golfer.visible = false;
-      if (!a.done && this.rest) { this.placeBall(this.rest.p); this.placeGolfer(this.rest.p, this.rest.aim); this.anim = { kind: 'glide', t: 0, dur: 1, p0: this.camP.clone(), l0: this.camL.clone(), to: this.pose(this.rest.p, this.rest.aim, this.rest.close) }; }
+      if (!a.done && this.rest) { this.placeBall(this.rest.p); this.placeGolfer(this.rest.p, this.rest.aim, true, this.rest.close ? PUTT : SWING); this.anim = { kind: 'glide', t: 0, dur: 1, p0: this.camP.clone(), l0: this.camL.clone(), to: this.pose(this.rest.p, this.rest.aim, this.rest.close) }; }
       a.then?.();
     }
   }
@@ -492,11 +484,11 @@ export class Course3D {
     a.t += dt;
     let bx, bz, by;
     if (a.phase === -1) { // the swing, up to the moment the club meets the ball
-      poseGolfer(this.golfer, Math.min(0.62, (a.t / 0.95) * 0.62));
-      if (a.t >= 0.95) { a.phase = 0; a.t = 0; a.swing = 0.62; a.ev('hit'); }
+      const fr = a.t * SWING.fps; poseGolfer(this.golfer, SWING, Math.min(SWING.hit, fr));
+      if (fr >= SWING.hit) { a.phase = 0; a.t = 0; a.swing = SWING.hit; a.ev('hit'); }
       return;
     }
-    if (a.swing < 1) { a.swing = Math.min(1, a.swing + dt * 0.75); poseGolfer(this.golfer, a.swing); }
+    if (a.swing < SWING.n - 1) { a.swing = Math.min(SWING.n - 1, a.swing + dt * SWING.fps); poseGolfer(this.golfer, SWING, a.swing); }
     if (a.phase === 0) { // in the air
       const u = Math.min(1, a.t / a.dur), s = 1 - Math.pow(1 - u, 1.45);
       bx = from.x + (L.x - from.x) * s; bz = from.z + (L.z - from.z) * s;
@@ -520,7 +512,7 @@ export class Course3D {
         if (this.rest) {
           let to2;
           if (a.done) { this.golfer.visible = false; const pin = pinOf(this.hole), L = Math.hypot(pin.x - a.from.x, pin.z - a.from.z) || 1, back = Math.min(16, L * 0.8); to2 = this.pose({ x: pin.x - ((pin.x - a.from.x) / L) * back, z: pin.z - ((pin.z - a.from.z) / L) * back }, pin); to2.l.set(pin.x, this.hAt(pin.x, pin.z) + 1, pin.z); }
-          else { this.placeBall(this.rest.p); this.placeGolfer(this.rest.p, this.rest.aim); to2 = this.pose(this.rest.p, this.rest.aim, this.rest.close); this.ring.visible = !!this.ringOn; }
+          else { this.placeBall(this.rest.p); this.placeGolfer(this.rest.p, this.rest.aim, true, this.rest.close ? PUTT : SWING); to2 = this.pose(this.rest.p, this.rest.aim, this.rest.close); this.ring.visible = !!this.ringOn; }
           this.anim = { kind: 'glide', t: 0, dur: 1.3, p0: this.camP.clone(), l0: this.camL.clone(), to: to2 };
         }
         a.then?.(); return;
