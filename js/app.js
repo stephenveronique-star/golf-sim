@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.4';
+const VERSION = '3.3.5';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -333,8 +333,16 @@ let setBallSeq = 0;
 const pending = new Map();
 // In dim light the ball looks smaller than it is, so its size can't be trusted for distance.
 function isDim() { return (eng.fps || 60) < 50; }
-function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : 0; }
-let camInfo = '', capInfo = '', lastPortrait = null, capRot = 0, capT0 = 0, capFirst = false;
+// The ball's size in the picture gives the distance to it, but one look is rough (a pixel either way is 10%).
+// Once the ball has been found a few times on the same spot, use the middle value of those looks.
+function sizeDist() {
+  if (sizeLog.length < 3 || !eng.w) return 0;
+  const v = sizeLog.map((q) => q.d).sort((a, b) => a - b), med = v[v.length >> 1], f = (eng.w / 2) / Math.tan((effHfov() * Math.PI) / 360);
+  return (f * BALL.diameter) / med;
+}
+function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : sizeDist(); }
+let camInfo = '', capInfo = '', lastPortrait = null, capRot = 0, capT0 = 0, capFirst = false, capGen = 0;
+let sizeLog = []; // ball sizes seen on this tee spot, for a steadier distance
 const capNote = (t) => { capInfo += (capInfo ? ' · ' : '') + t; log(`capture: ${t}`); };
 // The lens angle in Settings is for the long side of the picture. With the phone upright the picture is narrow, so the angle across it is smaller.
 function effHfov() { const w = eng.w || video.videoWidth || 16, h = eng.h || video.videoHeight || 9; return h > w ? (2 * Math.atan(Math.tan((+S.hfov * Math.PI) / 360) * (w / h)) * 180) / Math.PI : +S.hfov; }
@@ -403,6 +411,8 @@ function onEngineEvent(ev) {
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
+    if (sizeLog.length && (Math.abs(sizeLog[0].x - ev.ball.x) > eng.w * 0.12 || sizeLog[0].w !== eng.w)) sizeLog = []; // a different spot or picture: start again
+    sizeLog.push({ x: ev.ball.x, d: ev.ball.d, w: eng.w }); if (sizeLog.length > 15) sizeLog.shift();
     checkFraming(ev.ball);
     // remember the phone's position once your hand is off it
     tiltDeg = 0; tiltSince = 0; tiltHeld = false; gRef = gNow ? { ...gNow } : null;
@@ -567,12 +577,16 @@ async function startCamera() {
   const forced = new URLSearchParams(location.search).get('cap') || store.get('cap', '');
   if (forced !== 'worker' && forced !== 'video' && typeof MediaStreamTrackProcessor !== 'undefined' && !/iPhone|iPad|iPod/.test(navigator.userAgent)) {
     startMainProcessor(track.clone());
-  } else if (forced !== 'video') {
-    // iPhone: hand the camera straight to the background reader, which gets every picture the camera takes.
-    // Reading them off the video on screen (the old way) only ever gave half of them.
+  } else if (forced === 'worker') {
     startWorkerTrack(track);
   } else {
-    startVideoPath();
+    // iPhone: read the pictures off the video on screen. In Low Power Mode the iPhone only passes on half of them,
+    // so if that happens, try taking them straight from the camera in the background instead.
+    startVideoPath(); capInfo = ''; const gen = ++capGen;
+    setTimeout(() => {
+      if (gen !== capGen || !running || mode !== 'video' || forced === 'video') return;
+      if ((eng.fps || 60) < 45 && /@ (5\d|6\d|1\d\d)/.test(camInfo)) { capNote(`video route only gives ${Math.round(eng.fps)} a second, trying the background reader`); mode = 'switching'; startWorkerTrack(stream.getVideoTracks()[0], true); }
+    }, 5000);
   }
   startWatchdog();
   log(`capture path: ${mode}`);
@@ -604,8 +618,8 @@ function checkTurn(m) {
   const sc = [0, 90, 180, 270].map((r) => ({ r, c: corr(r) })).sort((a, b) => b.c - a.c);
   if (sc[0].c > 0.45 && sc[0].c - (sc[1].c > -2 ? sc[1].c : 0) > 0.12 && sc[0].r !== capRot) { capNote(`pictures arrive turned; turning them ${sc[0].r}° to match the screen (match ${sc[0].c.toFixed(2)})`); capRot = sc[0].r; sendConfig(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; }
 }
-function startWorkerTrack(track) {
-  mode = 'worker-track'; capInfo = ''; capRot = 0; capT0 = performance.now(); capFirst = false; sendConfig();
+function startWorkerTrack(track, keepNotes) {
+  mode = 'worker-track'; if (!keepNotes) capInfo = ''; capRot = 0; capT0 = performance.now(); capFirst = false; sendConfig();
   try { const c = track.clone(); worker.postMessage({ cmd: 'track', track: c }, [c]); capNote('camera handed to the background reader'); }
   catch (e) { capNote(`hand-over refused (${e.name || e.message}), using the video`); startVideoPath(); }
 }
@@ -1824,6 +1838,7 @@ function reportText(d) {
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
   L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount} · detector restarts ${workerRestarts}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
+  L.push(`distance to ball used for speed: ${+S.ballDist > 0.5 ? `${S.ballDist} m (you measured it)` : sizeDist() ? `${sizeDist().toFixed(2)} m (from ${sizeLog.length} looks at the ball's size)` : 'from the ball’s size, one look'}`);
   L.push(`settings: club ${S.club} · ${S.dist}/${S.speed} · alt ${S.altitude} m · ${S.tempC}°C · fov ${S.hfov}° · width ${S.procW} · sensitivity ${S.threshold} · auto-find ${S.autoFind} · speed adj ${S.speedCal}% · aim ${S.aim}°`);
   L.push(`screen ${innerWidth}×${innerHeight} · ${screen.orientation ? screen.orientation.type : ''} · ${navigator.userAgent}`);
   const ss = sessionShots().slice(-8);

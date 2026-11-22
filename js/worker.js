@@ -12,6 +12,8 @@ let reader = null;
 // last 3.8 s), made here so the page itself never has to grab extra pictures.
 let snaps = [], lastSnapT = -1;
 function keepSnap(g, w, h, t) {
+  if (t < lastSnapT - 1) { lastSnapT = -1; snaps = []; } // the pictures now come from a different source with its own clock: start again
+  if (t < lastSnapT - 0.5) { lastSnapT = -1; snaps = []; } // the clock changed (another way of reading the camera took over): start afresh
   if (t - lastSnapT < 0.045) return; // ~20 a second
   lastSnapT = t;
   const w2 = w >> 1, h2 = h >> 1;
@@ -82,7 +84,7 @@ function onVideoFrame(frame) {
 }
 
 let curTrack = null, readGen = 0;
-async function stopTrack() { opts.thumbs = false; readGen++; try { if (reader) await reader.cancel(); } catch { /* ignore */ } reader = null; try { curTrack && curTrack.stop(); } catch { /* ignore */ } curTrack = null; }
+async function stopTrack() { opts.thumbs = false; readGen++; lastSnapT = -1; snaps = []; try { if (reader) await reader.cancel(); } catch { /* ignore */ } reader = null; try { curTrack && curTrack.stop(); } catch { /* ignore */ } curTrack = null; }
 async function readTrack(track) {
   await stopTrack(); curTrack = track; const gen = readGen;
   if (typeof MediaStreamTrackProcessor === 'undefined') {
