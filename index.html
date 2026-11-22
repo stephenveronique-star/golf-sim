@@ -432,6 +432,18 @@ body[data-v3=on] .ready-light { left: auto; right: 8px; transform: scale(0.6); t
 .badge.got { opacity: 1; border-color: var(--cyan); box-shadow: 0 0 12px rgba(63,230,255,0.25); }
 .badge b { display: block; } .badge span { font-size: 12px; color: var(--muted); } .badge em { font-style: normal; font-size: 22px; }
 body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 14px rgba(255,122,26,0.7); }
+.pick { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 4px; margin-top: 8px; cursor: pointer; }
+.pick:active { border-color: var(--cyan); }
+.pick .sw { width: 44px; height: 44px; border-radius: 4px; flex: none; border: 1px solid var(--edge); }
+.pick .nm { flex: 1; min-width: 0; } .pick .nm b { display: block; font-size: 16px; } .pick .nm span { color: var(--muted); font-size: 13px; }
+.pick .del { padding: 4px 9px; }
+body[data-play=arcade][data-sec=drive] .drive-only, body[data-play=arcade][data-sec=drive] #status { display: none; }
+body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
+#scorePanel { padding: 12px 14px; overflow-y: auto; }
+#scorePanel h4 { margin: 0 0 2px; font-family: var(--data); font-size: 12px; letter-spacing: 0.1em; color: var(--cyan); text-transform: uppercase; }
+#scorePanel .tot { font-family: var(--data); font-size: 30px; color: #fff; text-shadow: 0 0 14px rgba(63,230,255,0.6); margin: 2px 0 8px; } #scorePanel .tot small { font-size: 14px; color: var(--muted); }
+#scorePanel table { width: 100%; border-collapse: collapse; font-size: 14px; } #scorePanel td, #scorePanel th { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--line); } #scorePanel th { color: var(--muted); font-weight: 600; }
+#scorePanel tr.now td { background: rgba(63,230,255,0.10); color: #fff; } #scorePanel td.u { color: var(--cyan); font-weight: 700; } #scorePanel td.o { color: var(--orange); font-weight: 700; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -439,6 +451,7 @@ body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 
 <div class="app">
   <div class="bar">
     <div class="brand">GOLF<span>SIM</span> <small id="brandVer" style="font-size:11px;color:var(--muted);font-weight:600"></small></div>
+    <button class="icon-btn" id="homeBtn" aria-label="Home" title="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg></button>
     <div class="sections" id="sections"><button data-sec="drive" class="on"><span class="my">My </span>Drive</button><button data-sec="info"><span class="my">My </span>Info</button><button data-sec="game"><span class="my">My </span>Game</button></div>
     <div class="pill off" id="status" title=""><i></i><span>Camera off</span></div>
     <div class="spacer"></div>
@@ -479,6 +492,7 @@ body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 
         <div class="cell"><div class="lbl">Club speed <span class="est">est</span></div><div class="val" id="vClub">—</div></div>
         <div class="cell"><div class="lbl">Spin <span class="est">est</span></div><div class="val" id="vSpin">—</div></div>
       </div>
+      <div id="scorePanel" hidden></div>
       <div class="tips" id="tips" hidden></div>
       <div class="tabs"><button class="on" data-tab="session">This session</button><button data-tab="swing">Swing</button><button data-tab="clubs">My distances</button></div>
       <div class="list" id="list"></div>
@@ -496,10 +510,12 @@ body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 
     <h1>Golf<span>Sim</span></h1>
     <p>Play a round on your phone, or put your iPhone on a tripod beside the ball, hit into your net, and see how far it went and where it went.</p>
     <div class="btns">
+      <button class="btn primary" id="startResume" hidden></button>
       <button class="btn primary" id="startArcade">🎮 Arcade · play on my phone</button>
-      <button class="btn primary" id="startCam">🏌️ Driving range · start camera</button>
-      <button class="btn" id="startGuide">How to set up</button>
+      <button class="btn primary" id="startCam">🏌️ Driving range · hit into my net</button>
+      <button class="btn" id="startNet">⛳ Play a course at my net</button>
       <div class="row2"><button class="btn" id="startInfo">My Info</button><button class="btn" id="startGame">My Game</button></div>
+      <div class="row2"><button class="btn" id="startGuide">How to set up</button><button class="btn" id="startSettings">Settings</button></div>
     </div>
     <div class="note" id="startNote">Works best in Safari on iPhone, in landscape, outdoors in daylight.</div>
   </div>
@@ -647,6 +663,14 @@ body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 
 </div></div>
 
 <!-- course designer -->
+<div class="overlay" id="pickSheet"><div class="sheet diag">
+  <button class="btn ghost close" data-close>Close</button>
+  <h2>Choose a course</h2>
+  <div class="seg" id="pickMode" style="margin:6px 0 4px"><button data-v="arcade">🎮 Arcade · on my phone</button><button data-v="range">🏌️ At my net</button></div>
+  <p class="kv" id="pickNote"></p>
+  <div id="pickList"></div>
+  <div class="ctrl" style="margin-top:12px"><button class="btn" id="pickDesign">＋ Design my own course</button></div>
+</div></div>
 <div class="overlay" id="courseSheet"><div class="sheet diag">
   <button class="btn ghost close" data-close>Close</button>
   <h2>Design a course</h2>

@@ -7,7 +7,7 @@ import { loadThree, Course3D } from './course3d.js';
 import { parseCommand } from './voice.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -1909,7 +1909,7 @@ function showSection(sec) {
   $('#pageGame').hidden = sec !== 'game';
   if (sec === 'info') renderInfo();
   if (sec === 'game') renderGame();
-  if (sec === 'drive' && !running && !round) $('#start').classList.remove('hide'); // camera not on yet: offer to start it
+  if (sec === 'drive' && !running && !round) { renderHome(); $('#start').classList.remove('hide'); } // nothing to show here yet: go home
 }
 $$('#sections button').forEach((b) => b.addEventListener('click', () => showSection(b.dataset.sec)));
 
@@ -2205,7 +2205,7 @@ function simShot() {
 }
 function renderRound(animate) {
   const on = !!round; document.body.dataset.round = on ? 'on' : 'off';
-  $('#holeCanvas').hidden = !on; $('#roundHud').hidden = !on;
+  $('#holeCanvas').hidden = !on; $('#roundHud').hidden = !on; renderScore();
   if (!on) { $('#v3wrap').hidden = true; document.body.dataset.v3 = 'off'; if (v3) v3.stop(); return; }
   const c = roundCourse(); if (!c) { endRound(false); return; }
   const h = c.holes[round.i], pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
@@ -2363,7 +2363,7 @@ $('#rhSim').addEventListener('click', meterStart);
 for (const [id, s] of [['#rhAimL', -1], ['#rhAimR', 1]]) $(id).addEventListener('click', () => { if (!round || round.done) return; const st = round.putting ? 0.5 : 2, lim = round.putting ? 8 : 40; round.aimOff = Math.max(-lim, Math.min(lim, (round.aimOff || 0) + s * st)); saveRound(); renderRound(); });
 $('#rhTap').addEventListener('click', meterTap);
 $('#rhNext').addEventListener('click', roundNext);
-$('#rhEnd').addEventListener('click', () => { const played = round && round.scores.length; endRound(!!played); toast(played ? 'Round ended — the holes you finished are saved in My Game.' : 'Round ended.'); });
+$('#rhEnd').addEventListener('click', () => { const played = round && round.scores.length, arcade = round && round.mode === 'arcade'; endRound(!!played); toast(played ? 'Round ended. The holes you finished are saved in My Game.' : 'Round ended.'); if (arcade || !running) goHome(); });
 $('#rhBag').innerHTML = CLUBS.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
 $('#rhBag').addEventListener('change', (e) => { S.club = e.target.value; saveSettings(); renderClubs(); renderRound(); });
 $('#rhClub').addEventListener('click', (e) => { S.club = e.currentTarget.dataset.club; saveSettings(); renderClubs(); renderRound(); });
@@ -2394,14 +2394,13 @@ $('#cdSave').addEventListener('click', () => {
   const name = ($('#cdName').value || 'My course').trim().slice(0, 30);
   customCourses.push({ id: 'c' + Date.now(), name: `${name} · ${holes.length} hole${holes.length > 1 ? 's' : ''}`, holes, custom: true });
   store.set('courses', customCourses); log(`course designed: ${name} (${holes.length} holes)`);
-  closeSheets(); showSection('game'); toast('Course saved — choose it under Play a round.');
+  closeSheets(); openPicker(pickMode); toast('Course saved. It is in the list now.');
 });
 function roundCardHtml() {
   const rounds = store.get('rounds', []).slice().reverse();
   const opts = allCourses().map((c) => `<option value="${c.id}">${c.name}${c.custom ? ' (mine)' : ''} — par ${c.holes.reduce((a, h) => a + h.par, 0)}</option>`).join('');
   let h = `<h3>Play a round</h3><div class="summary"><div class="sub" style="margin-bottom:8px">Pick a course, then choose how to play. <b>Arcade</b>: play on the phone like a game. Choose a club, tap for power and aim, and putt out yourself. <b>At my net</b>: hit real shots and the app flies each one down the hole; putting is worked out for you.</div>
-    <select id="rcCourse">${opts}</select>
-    <div class="ctrl" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${round ? '<button class="btn primary" id="rcResume">Back to my round ›</button>' : ''}<button class="btn ${round ? '' : 'primary'}" id="rcArcade">🎮 Play on phone (arcade)</button><button class="btn" id="rcStart">🏌️ Play at my net</button><button class="btn" id="rcDesign">＋ Design a course</button>${customCourses.length ? '<button class="btn ghost" id="rcDelete">Delete my chosen course</button>' : ''}</div></div>`;
+    <div class="ctrl" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${round ? '<button class="btn primary" id="rcResume">Back to my round ›</button>' : ''}<button class="btn ${round ? '' : 'primary'}" id="rcPick">Choose a course ›</button></div></div>`;
   h += badgesHtml();
   h += '<h3>My rounds</h3>';
   if (!rounds.length) h += '<div class="empty">No rounds yet.</div>';
@@ -2414,14 +2413,56 @@ function roundCardHtml() {
   return h;
 }
 $('#pageGame').addEventListener('click', (e) => {
-  const id = e.target.id, sel = $('#rcCourse');
-  if (id === 'rcStart') startRound(sel.value);
-  else if (id === 'rcArcade') startRound(sel.value, 'arcade');
+  const id = e.target.id;
+  if (id === 'rcPick') openPicker(round ? round.mode : 'arcade');
   else if (id === 'rcResume') { showSection('drive'); renderRound(); }
   else if (id === 'rcDesign') openDesigner();
-  else if (id === 'rcDelete') { const c = customCourses.find((x) => x.id === sel.value); if (!c) { toast('Choose one of your own courses first'); return; } customCourses = customCourses.filter((x) => x !== c); store.set('courses', customCourses); renderGame(); toast('Course deleted'); }
 });
 renderRound();
+
+// ---- choosing a course (one place for arcade and for rounds at the net)
+let pickMode = 'arcade';
+const THEME_SW = { park: 'linear-gradient(#6fb0e8 45%, #3d8a34 45%)', links: 'linear-gradient(#6fb0e8 40%, #3f7fb5 40% 50%, #9a9450 50%)', desert: 'linear-gradient(#7fb6e6 40%, #b56f4d 40% 55%, #5a9a3a 55%)', forest: 'linear-gradient(#6fa8d8 30%, #1f4a20 30% 60%, #38782d 60%)' };
+function openPicker(mode) {
+  pickMode = mode === 'range' ? 'range' : 'arcade';
+  $$('#pickMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === pickMode));
+  $('#pickNote').textContent = (pickMode === 'arcade' ? 'Play on the phone: pick a club, tap for power and aim, and putt out.' : 'Hit real shots into your net and the app plays them down the hole. It picks the club and moves on by itself, so you don’t need to touch the phone.') + (round ? ' Starting a new round ends the one in progress.' : '');
+  $('#pickList').innerHTML = allCourses().map((c) => { const b = buildCourse(c); return `<div class="pick" data-course="${c.id}"><div class="sw" style="background:${THEME_SW[c.theme] || THEME_SW.park}"></div><div class="nm"><b>${c.name}${c.custom ? ' (mine)' : ''}</b><span>${b.holes.length} holes · par ${b.holes.reduce((a, h) => a + h.par, 0)} · ${fmtDist(b.holes.reduce((a, h) => a + h.len, 0))} ${dUnit()}</span></div>${c.custom ? `<button class="btn ghost del" data-del="${c.id}" aria-label="Delete this course">✕</button>` : ''}<span class="go">›</span></div>`; }).join('');
+  openSheet('#pickSheet');
+}
+$('#pickMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) openPicker(b.dataset.v); });
+$('#pickList').addEventListener('click', async (e) => {
+  const del = e.target.closest('[data-del]');
+  if (del) { customCourses = customCourses.filter((x) => x.id !== del.dataset.del); store.set('courses', customCourses); openPicker(pickMode); toast('Course deleted'); return; }
+  const row = e.target.closest('[data-course]'); if (!row) return;
+  closeSheets(); unlockAudio('Round');
+  startRound(row.dataset.course, pickMode);
+  if (pickMode === 'range' && !running) { startMotion(true); openSetup(); toast('Set up the camera, then hit your tee shot.', 5000); }
+});
+$('#pickDesign').addEventListener('click', () => { closeSheets(); openDesigner(); });
+
+// ---- home: one way back to the front page from anywhere
+function renderHome() {
+  const r = $('#startResume'), c = round ? roundCourse() : null;
+  r.hidden = !(round || running);
+  if (round && c) r.textContent = `▶ Back to my round · hole ${round.i + 1} of ${c.holes.length}`; else if (running) r.textContent = '▶ Back to the driving range';
+  $('#startCam').textContent = running ? '🏌️ Driving range' : '🏌️ Driving range · hit into my net';
+}
+function goHome() { closeSheets(); if ($('#setup').classList.contains('show')) closeSetup(); renderHome(); $('#start').classList.remove('hide'); }
+$('#homeBtn').addEventListener('click', goHome);
+$('#startResume').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('drive'); if (round) renderRound(); });
+$('#startNet').addEventListener('click', () => openPicker('range'));
+$('#startSettings').addEventListener('click', () => { renderSettings(); openSheet('#settingsSheet'); });
+// ---- scorecard beside the course in arcade (the range numbers mean nothing there)
+function renderScore() {
+  const arcade = !!round && round.mode === 'arcade'; document.body.dataset.play = arcade ? 'arcade' : round ? 'net' : 'none';
+  const el = $('#scorePanel'); el.hidden = !arcade; if (!arcade) return;
+  const c = roundCourse(); if (!c) return;
+  const played = round.scores.filter((x) => x != null), tot = played.reduce((a, b) => a + b, 0), par = c.holes.slice(0, played.length).reduce((a, h) => a + h.par, 0), rel = tot - par;
+  let run = 0;
+  el.innerHTML = `<h4>${c.name}</h4><div class="tot">${played.length ? `${rel === 0 ? 'Level' : rel > 0 ? '+' + rel : rel} <small>${tot} shots · ${played.length} of ${c.holes.length} holes</small>` : '<small>Scorecard</small>'}</div>
+    <table><tr><th>Hole</th><th>Length</th><th>Par</th><th>Score</th><th>Total</th></tr>${c.holes.map((h, i) => { const sc = round.scores[i]; if (sc != null) run += sc - h.par; return `<tr class="${i === round.i ? 'now' : ''}"><td>${i + 1}</td><td>${fmtDist(h.len)}</td><td>${h.par}</td><td class="${sc == null ? '' : sc < h.par ? 'u' : sc > h.par ? 'o' : ''}">${sc ?? (i === round.i ? '…' : '')}</td><td>${sc == null ? '' : run === 0 ? 'E' : run > 0 ? '+' + run : run}</td></tr>`; }).join('')}</table>`;
+}
 
 // ------------------------------------------------------------ start
 $('#startCam').addEventListener('click', async () => {
@@ -2434,7 +2475,7 @@ $('#startCam').addEventListener('click', async () => {
 
 $('#startGuide').addEventListener('click', () => openSheet('#helpSheet'));
 $('#startInfo').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('info'); });
-$('#startArcade').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('game'); toast(round ? 'You have a round in progress. Tap “Back to my round”, or start a new one.' : 'Pick a course, then tap “Play on phone (arcade)”.', 6000); });
+$('#startArcade').addEventListener('click', () => openPicker('arcade'));
 $('#startGame').addEventListener('click', () => { $('#start').classList.add('hide'); showSection('game'); });
 
 renderClubs();
