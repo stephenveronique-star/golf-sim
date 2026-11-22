@@ -72,7 +72,10 @@ function onVideoFrame(frame) {
   }
 }
 
+let curTrack = null, readGen = 0;
+async function stopTrack() { readGen++; try { if (reader) await reader.cancel(); } catch { /* ignore */ } reader = null; try { curTrack && curTrack.stop(); } catch { /* ignore */ } curTrack = null; }
 async function readTrack(track) {
+  await stopTrack(); curTrack = track; const gen = readGen;
   if (typeof MediaStreamTrackProcessor === 'undefined') {
     self.postMessage({ type: 'unsupported' });
     return;
@@ -83,7 +86,7 @@ async function readTrack(track) {
     self.postMessage({ type: 'reading' });
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done || gen !== readGen) { value && value.close && value.close(); break; }
       onVideoFrame(value);
     }
   } catch (e) {
@@ -103,6 +106,7 @@ self.onmessage = (e) => {
       engine.opts.view = opts.view === 'dtl' ? 'dtl' : 'face'; engine.opts.camH = +opts.camH || 1;
       break;
     case 'track': readTrack(m.track); break;
+    case 'stopTrack': stopTrack(); break;
     case 'frame': onVideoFrame(m.frame); break;
     case 'gray': {
       const g = new Uint8Array(m.buf);

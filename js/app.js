@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.1';
+const VERSION = '3.3.2';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -341,10 +341,14 @@ function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: eff
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
-  if (m.type === 'status') { Object.assign(eng, m); updateReady(); const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
+  if (m.type === 'status') { Object.assign(eng, m); updateReady();
+    // safety: if the background reader's pictures come out turned the other way from the video, go back to the old way
+    if (mode === 'worker-track' && m.w && video.videoWidth && (m.w > m.h) !== (video.videoWidth > video.videoHeight)) { log(`background reader pictures are turned (${m.w}×${m.h} against video ${video.videoWidth}×${video.videoHeight}) — reading from the video instead`); worker.postMessage({ cmd: 'stopTrack' }); startVideoPath(); } const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
+  else if (m.type === 'reading') log('background reader is getting pictures straight from the camera');
+  else if (m.type === 'unsupported') { if (mode === 'worker-track') { log(`background reader not available here (${m.message || 'no support'}) — reading from the video instead`); startVideoPath(); } }
   else if (m.type === 'error') { console.error('worker:', m.message); log(`ERROR worker: ${m.message}`); }
   else if (m.type === 'debug') { const r = pendingDebug.get(m.id); pendingDebug.delete(m.id); if (r) r(m); }
   else if (m.type === 'snaps') { const r = pendingSnaps.get(m.id); pendingSnaps.delete(m.id); if (r) r(m.frames); }
@@ -436,6 +440,8 @@ function onEngineEvent(ev) {
     log(`SHOT${L.view === 'dtl' ? ` (from behind, phone tipped down ${L.tipDeg.toFixed(1)}°)` : ''} speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) { const rec = recordShot(ev.launch); if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); }
+  } else if (ev.type === 'lost') {
+    eng.state = 'waiting'; updateReady(); setStatus('busy', 'Looking for the ball'); log('ball hidden for a long time (behind view) — looking for it again');
   } else if (ev.type === 'moved') {
     eng.state = 'waiting'; phoneMovedFromPicture();
     log(`PHONE MOVED — not a shot · moving bits per frame [${(ev.moving || []).join(',')}] · finding the ball again`);
@@ -555,8 +561,13 @@ async function startCamera() {
   // pick the capture path
   // Chrome: read every camera frame directly. iPhone Safari: read frames from
   // the video element, which is exactly the picture shown on screen.
-  if (typeof MediaStreamTrackProcessor !== 'undefined' && !/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+  const forced = new URLSearchParams(location.search).get('cap') || store.get('cap', '');
+  if (forced !== 'worker' && forced !== 'video' && typeof MediaStreamTrackProcessor !== 'undefined' && !/iPhone|iPad|iPod/.test(navigator.userAgent)) {
     startMainProcessor(track.clone());
+  } else if (forced !== 'video') {
+    // iPhone: hand the camera straight to the background reader, which gets every picture the camera takes.
+    // Reading them off the video on screen (the old way) only ever gave half of them.
+    startWorkerTrack(track);
   } else {
     startVideoPath();
   }
@@ -571,6 +582,11 @@ async function startCamera() {
   return true;
 }
 
+function startWorkerTrack(track) {
+  mode = 'worker-track';
+  try { const c = track.clone(); worker.postMessage({ cmd: 'track', track: c }, [c]); }
+  catch (e) { log(`couldn't hand the camera to the background reader (${e.name || e.message}) — reading from the video instead`); startVideoPath(); }
+}
 // Chrome: processor on the window, VideoFrames transferred to the worker.
 async function startMainProcessor(track) {
   mode = 'main-processor';
@@ -674,6 +690,7 @@ function grabFrame(now, meta) {
 }
 
 function stopCamera() {
+  try { worker.postMessage({ cmd: 'stopTrack' }); } catch { /* ignore */ }
   running = false;
   try { mainReader && mainReader.cancel(); } catch { /* ignore */ }
   mainReader = null;
@@ -873,7 +890,7 @@ function checkFraming(b) {
   const wide = S.lens === 'wide', want = wide ? 2 : 3;
   if (!isDim() && !(+S.ballDist > 0.5) && b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
   if (!isDim() && !(+S.ballDist > 0.5) && b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
-  if (isDim()) issues.push({ key: 'slow', say: 'It is too dark. The camera has slowed down, so shots will be missed. Use it in daylight or under bright lights.', text: `Too dark: the camera has slowed to ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. Use it in daylight or under bright lights.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
+  if (isDim()) issues.push({ key: 'slow', say: 'The camera is running at half speed, so fast shots may be missed.', text: `The camera is only giving ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. In poor light an iPhone does this by itself; in good light please send me the report.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
   // room for the ball's flight: the ball should sit about a third in from the side away from the net
   const along = targetSide() > 0 ? xf : 1 - xf; // 0 = edge away from the net, 1 = edge nearest the net
   if (S.view !== 'dtl' && along > 0.45 && along <= 0.8) {

@@ -278,7 +278,8 @@ export function findMovers(prev, cur, next, w, h, tee, opts = {}) {
     blobs.push({ x: mo.cx, y: mo.cy, d: mo.minor, len: mo.major, area, peak, dist });
   }
   blobs.totalCount = blobs.length;
-  if (blobs.length > 30) { blobs.sort((a, b) => b.peak * b.area - a.peak * a.area); blobs.length = 30; }
+  const cap = behind ? 40 : 30;
+  if (blobs.length > cap) { blobs.sort(behind ? (a, b) => Math.abs(a.d - d * 0.6) - Math.abs(b.d - d * 0.6) : (a, b) => b.peak * b.area - a.peak * a.area); blobs.length = cap; }
   return blobs;
 }
 
@@ -489,7 +490,7 @@ function nelderMead(fn, x0, steps, iters = 160) {
  * o: { f (focal length, px), Zt (camera-to-ball depth, m), tLo, fps }
  */
 export function fitTrackBehind(frames, tee, o) {
-  const d = tee.d, { f, Zt } = o, dt = 1 / (o.fps || 60);
+  const d = tee.d, { f, Zt } = o, dt = 1 / (o.fps || 60), budget = o.budget ?? 250000;
   let best = null, work = 0;
   for (let i = 0; i < frames.length; i++) for (const a of frames[i].blobs) {
     const ax = a.x - tee.x, ay = a.y - tee.y, ra = Math.hypot(ax, ay);
@@ -500,7 +501,7 @@ export function fitTrackBehind(frames, tee, o) {
       if (Math.abs(ax * by - ay * bx) / rb > Math.max(1.5 * d, 0.05 * rb)) continue; // both on one line from the tee
       const ta = frames[i].t, tb = frames[j].t, tLo = Math.max(o.tLo ?? -Infinity, ta - 4 * dt);
       for (let q = 0; q <= 12; q++) {
-        if (++work > 250000) return best;
+        if (++work > budget) { i = frames.length; j = frames.length; break; }
         const t0 = tLo + ((ta - 0.05 * dt - tLo) * q) / 12, t1 = ta - t0, t2 = tb - t0;
         if (t1 <= 0) continue;
         const s = (rb * t1 - ra * t2) / (t1 * t2 * (ra - rb));
@@ -615,7 +616,7 @@ export class ShotEngine {
     this.lastPresentT = null;
     this.lastPresentRec = null;
     this.armedT = this.latest() ? this.latest().t : 0;
-    this._cands = [];
+    this._cands = []; this._watch = true; this._fw = []; this._hidden = null;
     const ev = { type: 'armed', how, ball: { x: b.x, y: b.y, d: b.d } };
     this.onEvent(ev);
     return ev;
@@ -630,6 +631,7 @@ export class ShotEngine {
     }
     this._lastT = t;
     const rec = this._store(g, t);
+    if (this.opts.view === 'dtl' && this.ball && this._watch) { const ev = this._flightWatch(rec); if (ev) return ev; }
     if (this.state === 'armed') return this._armedStep(rec);
     if (this.state === 'waiting') return this._waitingStep(rec);
     // only search by itself when the phone is sideways (landscape)
@@ -656,6 +658,7 @@ export class ShotEngine {
       this.onset = null; this.absent = 0; this.lastPresentT = rec.t; this.lastPresentRec = rec;
       return null;
     }
+    if (this.opts.view === 'dtl') return this._hiddenStep(rec, s);
     if (s < 0.6 && this.onset == null) {
       // Has the whole picture shifted a little (phone nudged, tripod settling)?
       // Then the ball is still there, just somewhere close by: follow it.
@@ -676,6 +679,33 @@ export class ShotEngine {
       return this._analyse();
     }
     return null;
+  }
+
+  // ---- phone behind the ball. The golfer's feet and the club hide the ball whenever they stand over it, so a ball
+  // that "disappears" means nothing here. Instead the app watches all the time for a ball flying away from the tee.
+  _hiddenStep(rec, s) {
+    if (s < 0.5) { if (this._hidden == null) this._hidden = rec.t; if (rec.t - this._hidden > 25) { this._hidden = null; this.state = 'waiting'; this._wait = { since: null, cand: null, n: 0 }; this._shotT = rec.t; const ev = { type: 'lost' }; this.onEvent(ev); return ev; } }
+    return null;
+  }
+  _flightWatch(rec) {
+    const B = this.buf, n = B.length; if (n < 3) return null;
+    const b = this.ball, mid = B[n - 2], fw = this._fw;
+    fw.push({ t: mid.t, blobs: findMovers(B[n - 3].g, mid.g, rec.g, this.w, this.h, b, { threshold: this.opts.threshold, behind: true }), rec: mid });
+    while (fw.length && mid.t - fw[0].t > 0.5) fw.shift();
+    if (fw.filter((f) => f.blobs.length).length < 3 || fw[fw.length - 1].blobs.length > 35) return null; // nothing yet, or everything is moving
+    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH };
+    const track = fitTrackBehind(fw, b, { ...behindDepth(b, cam), fps: this.fps, budget: 6000 });
+    if (!track || track.pts.length < 3 || track.residual > Math.max(2, b.d * 0.6)) return null;
+    // let the ball fly on until it is lost to sight, so every sighting counts
+    const lastT = track.pts[track.pts.length - 1].t;
+    if (mid.t - lastT < 2.5 / this.fps && track.pts.length < 12 && mid.t - track.tImp < 0.42) return null;
+    const launch = solveShotBehind(track, b, cam);
+    if (launch.speed < 8 || launch.speed > 95 || launch.launch < 2 || launch.launch > 60 || Math.abs(launch.direction) > 35) return null;
+    if (this._presence(rec) > 0.8) return null; // the ball is still sitting there: that was something else moving
+    this._watch = false; this.state = 'waiting'; this._wait = { since: null, cand: null, n: 0 }; this._shotT = rec.t; this._cands = []; this._hidden = null;
+    const k0 = Math.max(0, B.findIndex((r) => r.t >= track.tImp) - 3);
+    const ev = { type: 'shot', tNow: rec.t, tOnset: track.tImp, launch, track, moving: fw.map((f) => f.blobs.length), frames: B.slice(k0, k0 + 16).map((r) => ({ t: r.t, g: r.g.slice() })), tee: { x: b.x, y: b.y, d: b.d }, w: this.w, h: this.h, fps: this.fps };
+    this.onEvent(ev); return ev;
   }
 
   // Camera timestamps can jitter by a few ms. The sensor runs at a fixed

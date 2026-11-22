@@ -24,19 +24,22 @@ export function render(shot, o) {
     return { x: sc.cx + (sc.f * X1) / Z2, y: sc.cy - (sc.f * Y2) / Z2, s: sc.f / Z2 };
   };
   const la = shot.launch * DEG, di = shot.direction * DEG, v = { x: shot.speed * Math.cos(la) * Math.cos(di), y: shot.speed * Math.sin(la), z: shot.speed * Math.cos(la) * Math.sin(di) };
-  const tImp = 1.8 + (o.phase ?? 0.37) / fps, frames = [];
+  const tImp = (o.hide ? 2.9 : 1.8) + (o.phase ?? 0.37) / fps, frames = [];
   const ball = (t) => { if (t < tImp || t >= (o.reteeAt ?? 1e9)) return { x: 0, y: D / 2, z: 0 }; const s = t - tImp, x = v.x * s; return x > net ? null : { x, y: D / 2 + v.y * s - 4.905 * s * s, z: v.z * s }; };
   const club = (t) => { const a = ((t - tImp) * shot.speed) / 1.4 / 1.1; return Math.abs(a) > 2.2 ? null : { x: 1.1 * Math.sin(a), y: 0.03 + 1.1 * (1 - Math.cos(a)), z: -0.1 - 0.5 * (1 - Math.cos(a)) }; };
-  for (let k = 0; k / fps < (o.duration ?? 2.6); k++) {
+  for (let k = 0; k / fps < (o.duration ?? (o.hide ? 3.7 : 2.6)); k++) {
     const t = k / fps, img = new Float32Array(sc.bg), S = 8, acc = new Float32Array(img.length);
     // golfer: a dark block to the left of the ball that sways through the swing
     const sway = Math.abs(t - tImp) < 0.4 ? 0.1 * Math.sin((t - tImp) * 8) : 0, gp = proj(0.05 + sway, 0.9, -0.85), gw = 0.45 * gp.s, gh = 1.6 * gp.s;
     for (let y = Math.max(0, Math.round(gp.y - gh / 2)); y < Math.min(sc.h, gp.y + gh / 2); y++) for (let x = Math.max(0, Math.round(gp.x - gw / 2)); x < Math.min(sc.w, gp.x + gw / 2); x++) img[y * sc.w + x] = 38 + 8 * Math.sin(y * 0.1);
-    const moving = Math.abs(t - tImp) < 0.45;
+    const moving = Math.abs(t - tImp) < 0.45 || (o.hide && t > tImp - 1.4);
     for (let j = 0; j < S; j++) {
       if (!moving) { const layer = img, b = ball(t); if (b) { const p = proj(b.x, b.y, b.z); disk(layer, sc, p.x, p.y, (D / 2) * p.s, 235); } acc.set(layer); break; }
       const ts = t + (j / (S - 1) - 0.5) * expo, layer = new Float32Array(img), c = club(ts), b = ball(ts);
       if (c) { const p = proj(c.x, c.y, c.z); disk(layer, sc, p.x, p.y, 0.05 * p.s, 28); }
+      if (o.hide) { // the golfer walks across the ball, then the club head sits in front of it until the strike
+        const tw = ts - (tImp - 1.3); if (tw > 0 && tw < 0.5) { const p = proj(-0.2, 0.25, -0.8 + tw * 3.2); for (let yy = Math.max(0, Math.round(p.y - 0.5 * p.s)); yy < Math.min(sc.h, p.y + 0.3 * p.s); yy++) for (let xx = Math.max(0, Math.round(p.x - 0.12 * p.s)); xx < Math.min(sc.w, p.x + 0.12 * p.s); xx++) layer[yy * sc.w + xx] = 200; }
+        if (ts > tImp - 0.7 && ts < tImp - 0.02) { const p = proj(-0.07, 0.03, 0); disk(layer, sc, p.x, p.y, 0.05 * p.s, 30); } }
       if (b) { const p = proj(b.x, b.y, b.z); disk(layer, sc, p.x, p.y, (D / 2) * p.s, 235); }
       for (let i = 0; i < acc.length; i++) acc[i] += layer[i] / S;
     }
@@ -47,7 +50,7 @@ export function render(shot, o) {
 }
 if (process.argv[1].endsWith('behind-test.mjs')) {
   const cases = [{ speed: 30, launch: 28, direction: 0 }, { speed: 42, launch: 20, direction: 4 }, { speed: 50, launch: 16, direction: -5 }, { speed: 62, launch: 12, direction: 2 }, { speed: 70, launch: 11, direction: -3 }, { speed: 22, launch: 34, direction: 8 }];
-  for (const cfg of (process.env.CFG ? [JSON.parse(process.env.CFG)] : [{ fps: 60, net: 3.5 }, { fps: 60, net: 5 }, { fps: 120, net: 3.5 }, { fps: 30, net: 3.5 }, { fps: 60, net: 3.5, measured: true }, { fps: 60, net: 3.5, measured: true, yaw: 3 }])) {
+  for (const cfg of (process.env.CFG ? [JSON.parse(process.env.CFG)] : [{ fps: 60, net: 3.5 }, { fps: 60, net: 3.5, hide: true }, { fps: 30, net: 40, hide: true }, { fps: 60, net: 5 }, { fps: 120, net: 3.5 }, { fps: 30, net: 3.5 }, { fps: 60, net: 3.5, measured: true }, { fps: 60, net: 3.5, measured: true, yaw: 3 }])) {
     let n = 0, found = 0, eS = 0, eL = 0, eD = 0; const lines = [];
     for (const [i, c] of cases.entries()) for (const phase of [0.15, 0.5, 0.85]) {
       const r = render(c, { ...cfg, phase, seed: 11 + i });
@@ -56,6 +59,7 @@ if (process.argv[1].endsWith('behind-test.mjs')) {
       n++; const s = ev.find((e) => e.type === 'shot');
       if (s) { found++; const L = s.launch; eS += Math.abs(L.speed / c.speed - 1); eL += Math.abs(L.launch - c.launch); eD += Math.abs(L.direction - c.direction); lines.push(`${c.speed}/${c.launch}/${c.direction} → ${L.speed.toFixed(1)}/${L.launch.toFixed(1)}/${L.direction.toFixed(1)} (${L.points} pts)`); }
       else lines.push(`${c.speed}/${c.launch}/${c.direction} → ${ev.map((e) => e.type + (e.reason ? ':' + e.reason : '')).join(',')}`);
+      const bad = ev.filter((e) => e.type === 'moved' || e.type === 'missed' || (e.type === 'shot' && e !== s)).length; if (bad) lines.push(`   !! false events: ${ev.map((e) => e.type).join(',')}`);
     }
     console.log(`\n${JSON.stringify(cfg)}: found ${found}/${n} · average error: speed ${((eS / found) * 100).toFixed(1)}% · launch ${(eL / found).toFixed(1)}° · direction ${(eD / found).toFixed(1)}°`);
     if (process.argv.includes('-v')) console.log(lines.join('\n'));
