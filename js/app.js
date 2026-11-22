@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.5';
+const VERSION = '3.3.6';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -351,7 +351,7 @@ function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
   if (m.type === 'status') { Object.assign(eng, m); updateReady();
-    { const ft = $('#fpsTag'), f = Math.round(m.fps || 0); ft.hidden = !running || !f; ft.textContent = `${f} pictures a second`; ft.className = `pill drive-only ${f >= 50 ? 'good' : 'bad'}`; }
+    { const ft = $('#fpsTag'), f = Math.round(m.fps || 0); ft.hidden = !running || !f; ft.textContent = `${f}/s`; ft.className = `pill drive-only ${f >= 50 ? 'good' : 'bad'}`; }
     if (mode === 'worker-track' && m.frames && !capFirst) { capFirst = true; capNote(`first pictures after ${Math.round(performance.now() - capT0)} ms, ${m.w}×${m.h}`); }
     if (mode === 'worker-track' && capFirst && m.fps && performance.now() - capT0 > 6000 && !/steady/.test(capInfo)) capNote(`steady at ${m.fps.toFixed(0)} a second`); const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
   else if (m.type === 'event') onEngineEvent(m.ev);

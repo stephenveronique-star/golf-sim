@@ -475,7 +475,8 @@ body[data-play=arcade][data-v3=on] #holeCanvas { top: 56px; width: 34%; height: 
 .round-hud #rhBag { flex: 1; min-width: 0; font-size: 18px; padding: 10px 8px; border-radius: 6px; border-color: var(--cyan); text-align: center; text-align-last: center; }
 @media (max-height: 430px) and (orientation: landscape) { .round-hud .rh-b { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; } .rh-row1 { flex: 1 1 240px; } .round-hud .btn.big { width: auto; flex: 1 1 160px; padding: 9px; font-size: 16px; } .rh-row3 { flex: 0 0 auto; } }
 #voiceSel { font: inherit; width: 100%; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 8px; }
-#fpsTag { font-family: var(--data); font-size: 12px; } #fpsTag.bad { border-color: var(--bad); color: var(--bad); } #fpsTag.good { border-color: #39ff9c; color: #39ff9c; }
+#fpsTag { font-family: var(--data); font-size: 12px; padding: 5px 7px; flex: none; }
+.bar { min-width: 0; } .bar .pill { min-width: 0; overflow: hidden; text-overflow: ellipsis; } #fpsTag.bad { border-color: var(--bad); color: var(--bad); } #fpsTag.good { border-color: #39ff9c; color: #39ff9c; }
 body[data-play=arcade] #fpsTag { display: none; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
