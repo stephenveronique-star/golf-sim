@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.6';
+const VERSION = '3.3.7';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -2680,7 +2680,13 @@ async function checkForUpdate() {
     log(`new version ${live} is available (this is ${VERSION})`);
     const bar = document.createElement('button');
     bar.id = 'updateBar'; bar.textContent = `New version ${live} is ready — tap here to update`;
-    bar.addEventListener('click', () => { location.href = location.pathname + '?v=' + encodeURIComponent(live); });
+    // Safari keeps its own copy of the app's files for up to ten minutes. Fetch fresh copies first, or the reload just shows the old version again.
+    bar.addEventListener('click', async () => {
+      bar.textContent = 'Updating…'; bar.disabled = true;
+      const files = ['index.html', 'version.json', 'js/app.js', 'js/physics.js', 'js/range.js', 'js/posecap.js', 'js/swing.js', 'js/round.js', 'js/course3d.js', 'js/voice.js', 'js/sound.js', 'js/swingstore.js', 'js/mocap.js', 'js/tracker.js', 'js/worker.js'];
+      await Promise.all(files.map((f) => fetch(f, { cache: 'reload' }).catch(() => null)));
+      location.href = location.pathname + '?v=' + encodeURIComponent(live);
+    });
     document.body.appendChild(bar);
   } catch { /* offline: try again later */ }
 }
