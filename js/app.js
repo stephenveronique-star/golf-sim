@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.3';
+const VERSION = '3.3.4';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -913,7 +913,7 @@ function checkFraming(b) {
   const wide = S.lens === 'wide', want = wide ? 2 : 3;
   if (!isDim() && !(+S.ballDist > 0.5) && b.d < (wide ? 6 : 7)) issues.push({ key: 'small', say: `The ball is too small in the picture. Move the phone closer, about ${want} metres from the ball.`, text: `Ball only ${b.d.toFixed(0)} px — the phone looks about ${dist.toFixed(0)} m away. Move it to about ${want} m from the ball.` });
   if (!isDim() && !(+S.ballDist > 0.5) && b.d >= 7 && dist < (wide ? 1.5 : 2.3)) issues.push({ key: 'close', say: wide ? 'The phone is too close. Move it back to about 2 metres.' : 'The phone is too close for the normal lens. Move it back to 3 metres, or tap Camera and switch to the wide lens.', text: wide ? `The phone is only about ${dist.toFixed(1)} m from the ball — move it back to about 2 m.` : `The phone is only about ${dist.toFixed(1)} m from the ball — your whole body won’t fit. Move it back to about 3 m, or tap Camera › 🔭 to use the wide lens at 2 m.` });
-  if (isDim()) issues.push({ key: 'slow', say: 'The camera is running at half speed, so fast shots may be missed.', text: `The camera is only giving ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. In poor light an iPhone does this by itself; in good light please send me the report.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
+  if (isDim()) issues.push({ key: 'slow', say: 'The app is only getting half the pictures. Turn off Low Power Mode on the iPhone, then tap Camera again.', text: `The app is only getting ${Math.round(eng.fps)} pictures a second (it needs 60), so fast shots are missed or misread. The usual cause is Low Power Mode (yellow battery icon): turn it off in the iPhone’s Settings › Battery, then tap Camera again. Very poor light can also do it.${NOT_SAFARI ? ' Also open the app in Safari, not ' + NOT_SAFARI + '.' : ''}${+S.ballDist > 0.5 ? '' : ` Speed is being worked out as if the phone is ${S.lens === 'wide' ? 2 : 3} m from the ball.`}` });
   // room for the ball's flight: the ball should sit about a third in from the side away from the net
   const along = targetSide() > 0 ? xf : 1 - xf; // 0 = edge away from the net, 1 = edge nearest the net
   if (S.view !== 'dtl' && along > 0.45 && along <= 0.8) {
