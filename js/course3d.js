@@ -40,13 +40,14 @@ function swingAt(t) {
 }
 function buildGolfer() {
   const g = new T.Group(), mat = (c) => new T.MeshLambertMaterial({ color: c });
-  const shirt = mat(0xff6a1f), trouser = mat(0x1b2740), skin = mat(0xd9a57e), white = mat(0xf5f5f5), steel = mat(0xcfd6dc), dark = mat(0x16181c);
-  const cyl = new T.CylinderGeometry(1, 1, 1, 10), sph = new T.SphereGeometry(1, 14, 10), parts = {};
+  const shirt = mat(0xff6a1f), trouser = mat(0x1b2740), skin = mat(0xd9a57e), white = mat(0xf5f5f5), steel = mat(0xcfd6dc), dark = mat(0x16181c), hair = mat(0x2a1c12);
+  const cyl = new T.CylinderGeometry(1, 1, 1, 14), sph = new T.SphereGeometry(1, 18, 12), parts = {};
   const limb = (name, m, r) => { const o = new T.Mesh(cyl, m); o.userData.r = r; g.add(o); parts[name] = o; };
   const ball = (name, m, r) => { const o = new T.Mesh(sph, m); o.scale.setScalar(r); g.add(o); parts[name] = o; };
-  limb('legL', trouser, 0.075); limb('legR', trouser, 0.075); limb('torso', shirt, 0.165); limb('armL', shirt, 0.045); limb('armR', shirt, 0.045); limb('foreL', skin, 0.038); limb('foreR', skin, 0.038); limb('club', steel, 0.011); limb('neck', skin, 0.05);
-  ball('hips', trouser, 0.17); ball('head', skin, 0.105); ball('cap', white, 0.11); ball('shL', shirt, 0.075); ball('shR', shirt, 0.075); ball('hands', white, 0.055); ball('footL', dark, 0.07); ball('footR', dark, 0.07); ball('clubhead', dark, 0.05);
-  parts.footL.scale.set(0.07, 0.05, 0.13); parts.footR.scale.set(0.07, 0.05, 0.13); parts.clubhead.scale.set(0.035, 0.03, 0.06); parts.cap.scale.set(0.112, 0.07, 0.125);
+  for (const s of ['L', 'R']) { limb('thigh' + s, trouser, 0.085); limb('shin' + s, trouser, 0.066); ball('knee' + s, trouser, 0.075); limb('arm' + s, shirt, 0.052); limb('fore' + s, skin, 0.04); ball('elb' + s, shirt, 0.052); ball('sh' + s, shirt, 0.082); ball('foot' + s, white, 0.07); }
+  limb('torso', shirt, 0.16); limb('club', steel, 0.011); limb('neck', skin, 0.05);
+  ball('hips', trouser, 0.17); ball('belt', dark, 0.16); ball('chest', shirt, 0.19); ball('head', skin, 0.105); ball('hair', hair, 0.1); ball('cap', white, 0.11); ball('brim', white, 0.1); ball('hands', white, 0.058); ball('clubhead', dark, 0.05);
+  parts.footL.scale.set(0.07, 0.05, 0.14); parts.footR.scale.set(0.07, 0.05, 0.14); parts.clubhead.scale.set(0.035, 0.03, 0.06); parts.cap.scale.set(0.112, 0.07, 0.12); parts.brim.scale.set(0.09, 0.012, 0.11);
   g.userData.parts = parts; g.userData.shirt = shirt; return g;
 }
 const UP = { x: 0, y: 1, z: 0 };
@@ -59,13 +60,18 @@ export function poseGolfer(g, t) {
   const P = g.userData.parts, s = swingAt(t), hx = s.hip;
   const hip = [hx, 0.95, 0], neck = [hx * 0.6, 1.4, 0.25], a = (s.turn * Math.PI) / 180, sx = 0.21 * Math.cos(a), sz = -0.21 * Math.sin(a);
   const shL = [neck[0] + sx, neck[1] - 0.03, neck[2] + sz], shR = [neck[0] - sx, neck[1] - 0.03, neck[2] - sz], head = [neck[0], 1.58, 0.33];
-  setLimb(P.legL, [hx + 0.1, 0.93, 0], [0.22, 0.05, 0]); setLimb(P.legR, [hx - 0.1, 0.93, 0], [-0.22, 0.05, 0]);
-  P.footL.position.set(0.22, 0.04, 0.05); P.footR.position.set(-0.22, 0.04, 0.05); P.hips.position.set(...hip); P.hips.scale.set(0.19, 0.14, 0.15);
-  setLimb(P.torso, hip, neck); P.torso.scale.x = 0.2; setLimb(P.neck, neck, head);
-  P.head.position.set(...head); P.cap.position.set(head[0], head[1] + 0.06, head[2] + 0.02); P.shL.position.set(...shL); P.shR.position.set(...shR);
+  for (const [sd, sg] of [['L', 1], ['R', -1]]) { // legs with a little knee flex
+    const hp = [hx + sg * 0.1, 0.93, 0], ft = [sg * 0.22, 0.07, 0], kn = [(hp[0] + ft[0]) / 2 + sg * 0.02, 0.5, 0.1];
+    setLimb(P['thigh' + sd], hp, kn); setLimb(P['shin' + sd], kn, ft); P['knee' + sd].position.set(...kn); P['foot' + sd].position.set(ft[0], 0.04, 0.06);
+  }
+  P.hips.position.set(...hip); P.hips.scale.set(0.19, 0.14, 0.15); P.belt.position.set(hip[0], hip[1] + 0.09, hip[2] + 0.02); P.belt.scale.set(0.175, 0.035, 0.14);
+  setLimb(P.torso, hip, neck); P.torso.scale.x = 0.19; setLimb(P.neck, neck, head);
+  P.chest.position.set(neck[0], neck[1] - 0.14, neck[2] - 0.05); P.chest.scale.set(0.2, 0.16, 0.14); P.chest.rotation.y = -a;
+  P.head.position.set(...head); P.hair.position.set(head[0], head[1] + 0.01, head[2] - 0.03); P.cap.position.set(head[0], head[1] + 0.06, head[2] + 0.02); P.brim.position.set(head[0], head[1] + 0.04, head[2] + 0.13);
+  P.shL.position.set(...shL); P.shR.position.set(...shR);
   const elbow = (sh, bend) => { const m = lerp3(sh, s.h, 0.5); return [m[0] - bend * 0.12, m[1] - 0.06, m[2] - 0.04 + Math.abs(bend) * 0.05]; };
   const eL = elbow(shL, t > 0.75 ? 1 : 0.15), eR = elbow(shR, t > 0.2 && t < 0.6 ? -1 : -0.15);
-  setLimb(P.armL, shL, eL); setLimb(P.foreL, eL, s.h); setLimb(P.armR, shR, eR); setLimb(P.foreR, eR, s.h);
+  setLimb(P.armL, shL, eL); setLimb(P.foreL, eL, s.h); setLimb(P.armR, shR, eR); setLimb(P.foreR, eR, s.h); P.elbL.position.set(...eL); P.elbR.position.set(...eR);
   P.hands.position.set(...s.h);
   const ch = [s.h[0] + s.c[0], Math.max(0.03, s.h[1] + s.c[1]), s.h[2] + s.c[2]]; setLimb(P.club, s.h, ch); P.clubhead.position.set(...ch);
 }
@@ -126,12 +132,11 @@ export class Course3D {
     }));
     sky.renderOrder = -10; this.scene.add(sky); this.sky = sky;
     // clouds
-    const c = document.createElement('canvas'); c.width = 256; c.height = 128; const x = c.getContext('2d'), rnd = rng(7);
-    for (let i = 0; i < 26; i++) {
-      const px = 40 + rnd() * 176, py = 50 + rnd() * 34, pr = 16 + rnd() * 30, g = x.createRadialGradient(px, py, 0, px, py, pr);
-      g.addColorStop(0, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 256, 128);
-    }
-    const ct = new T.CanvasTexture(c); ct.colorSpace = T.SRGBColorSpace;
+    // worked out number by number rather than drawn on a canvas: iPhones add speckle to canvas pictures
+    const CW = 128, CH = 64, cd = new Uint8Array(CW * CH * 4), rnd = rng(7), puffs = [];
+    for (let i = 0; i < 22; i++) puffs.push([20 + rnd() * 88, 25 + rnd() * 17, 8 + rnd() * 15]);
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) { let a = 0; for (const [px, py, pr] of puffs) { const k = 1 - Math.hypot(x - px, y - py) / pr; if (k > 0) a = 1 - (1 - a) * (1 - 0.55 * k * k * (3 - 2 * k)); } const o = (y * CW + x) * 4; cd[o] = cd[o + 1] = cd[o + 2] = 255; cd[o + 3] = Math.round(a * 255); }
+    const ct = new T.DataTexture(cd, CW, CH, T.RGBAFormat); ct.magFilter = ct.minFilter = T.LinearFilter; ct.needsUpdate = true;
     this.clouds = new T.Group();
     for (let i = 0; i < 16; i++) {
       const sp = new T.Sprite(new T.SpriteMaterial({ map: ct, fog: false, depthWrite: false, transparent: true, opacity: 0.75 + rnd() * 0.2 }));
@@ -338,11 +343,22 @@ export class Course3D {
     const steel = new T.MeshLambertMaterial({ color: 0xdfe6ee }), navy = new T.MeshLambertMaterial({ color: 0x18305c });
     for (let r = 0; r < 6; r++) { box(stand, r % 2 ? steel : navy, 1.1, 0.55 * (r + 1), 22, r * 1.1, 0.275 * (r + 1), 0); for (let k = 0; k < 20; k++) { const lx = r * 1.1, lz = -10.4 + k * 1.09 + (rnd() - 0.5) * 0.3, c = Math.cos(stand.rotation.y), s2 = Math.sin(stand.rotation.y); ppl.push({ x: gsx + lx * c + lz * s2, y: gy + 0.55 * (r + 1) - 0.25, z: gsz - lx * s2 + lz * c, s: 0.85 }); } }
     box(stand, navy, 0.3, 4.2, 22.4, 6.7, 2.1, 0); box(stand, steel, 7.6, 0.18, 23, 3.1, 5.2, 0); for (const z of [-11, 11]) box(stand, steel, 0.2, 5.2, 0.2, -0.4, 2.6, z);
-    const bodyG = new T.BoxGeometry(0.42, 0.95, 0.26); bodyG.translate(0, 0.72, 0); const headG = new T.SphereGeometry(0.13, 8, 6); headG.translate(0, 1.36, 0);
-    const bodies = inst(bodyG, new T.MeshLambertMaterial({ color: 0xffffff }), ppl.length), heads = inst(headG, new T.MeshLambertMaterial({ color: 0xffffff }), ppl.length);
-    const shirts = [0xe63946, 0xf1faee, 0x457b9d, 0xffb703, 0x2a9d8f, 0xf4a261, 0x9b5de5, 0xffffff, 0x1d3557, 0xef476f], skins = [0xe0ac8a, 0x8d5a3b, 0xc68863, 0x5a3a26, 0xf0c8a8];
-    ppl.forEach((q, i) => { m4.compose(new T.Vector3(q.x, q.y, q.z), qn.identity(), new T.Vector3(q.s, q.s, q.s)); bodies.setMatrixAt(i, m4); heads.setMatrixAt(i, m4); bodies.setColorAt(i, col.set(shirts[(rnd() * shirts.length) | 0])); heads.setColorAt(i, col.set(skins[(rnd() * skins.length) | 0])); });
-    for (const m of [bodies, heads]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; }
+    // each spectator: legs, a body with arms, a head and hair or a hat, turned to face the flag
+    const merge = (list) => { const pos = [], nor = []; for (const q of list) { const n = q.index ? q.toNonIndexed() : q; pos.push(...n.attributes.position.array); nor.push(...n.attributes.normal.array); } const o = new T.BufferGeometry(); o.setAttribute('position', new T.Float32BufferAttribute(pos, 3)); o.setAttribute('normal', new T.Float32BufferAttribute(nor, 3)); return o; };
+    const part = (geo, x, y, z, sx = 1, sz = 1) => { geo.scale(sx, 1, sz); geo.translate(x, y, z); return geo; };
+    const legsG = merge([part(new T.CylinderGeometry(0.075, 0.065, 0.82, 8), 0.09, 0.41, 0), part(new T.CylinderGeometry(0.075, 0.065, 0.82, 8), -0.09, 0.41, 0)]);
+    const bodyG = merge([part(new T.CylinderGeometry(0.2, 0.16, 0.62, 10), 0, 1.12, 0, 1, 0.68), part(new T.CylinderGeometry(0.05, 0.045, 0.56, 6), 0.25, 1.1, 0), part(new T.CylinderGeometry(0.05, 0.045, 0.56, 6), -0.25, 1.1, 0), part(new T.SphereGeometry(0.2, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), 0, 1.42, 0, 1, 0.68)]);
+    const headG = part(new T.SphereGeometry(0.115, 10, 8), 0, 1.58, 0), hatG = part(new T.SphereGeometry(0.125, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), 0, 1.6, -0.01);
+    const lam = () => new T.MeshLambertMaterial({ color: 0xffffff }), legs = inst(legsG, lam(), ppl.length), bodies = inst(bodyG, lam(), ppl.length), heads = inst(headG, lam(), ppl.length), hats = inst(hatG, lam(), ppl.length);
+    const shirts = [0xe63946, 0xf1faee, 0x457b9d, 0xffb703, 0x2a9d8f, 0xf4a261, 0x9b5de5, 0xffffff, 0x1d3557, 0xef476f, 0x8ecae6], skins = [0xe0ac8a, 0x8d5a3b, 0xc68863, 0x5a3a26, 0xf0c8a8], pants = [0x1d2a44, 0x3a3a3a, 0xc9b99a, 0x2f4f6f, 0xe8e2d0, 0x5a4636], tops = [0x2a1c12, 0x111111, 0x6b4a2a, 0xf5f5f5, 0xd9c08a, 0xc0392b, 0x1d3557];
+    const pick = (a) => a[(rnd() * a.length) | 0], yAxis = new T.Vector3(0, 1, 0);
+    ppl.forEach((q, i) => {
+      qn.setFromAxisAngle(yAxis, Math.atan2(pin.x - q.x, pin.z - q.z)); m4.compose(new T.Vector3(q.x, q.y, q.z), qn, new T.Vector3(q.s * (0.9 + rnd() * 0.25), q.s, q.s * (0.9 + rnd() * 0.25)));
+      for (const m of [legs, bodies, heads, hats]) m.setMatrixAt(i, m4);
+      legs.setColorAt(i, col.set(pick(pants))); bodies.setColorAt(i, col.set(pick(shirts))); heads.setColorAt(i, col.set(pick(skins))); hats.setColorAt(i, col.set(pick(tops)));
+    });
+    qn.identity();
+    for (const m of [legs, bodies, heads, hats]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; }
     // --- animals
     this.bucks = []; this.gatorsM = [];
     if (TH.animals === 'buck') for (let i = 0; i < 200 && this.bucks.length < 5; i++) {
@@ -433,9 +449,10 @@ export class Course3D {
     }
   }
 
-  resize() {
+  /** pad = how many pixels at the bottom are covered by the buttons: the view is shifted up by half of that so the golfer stays in sight */
+  resize(pad = 0) {
     const r = this.cv.getBoundingClientRect(), w = Math.max(50, r.width), h = Math.max(50, r.height);
-    this.r.setSize(w, h, false); this.cam.aspect = w / h; this.cam.fov = w / h < 0.9 ? 62 : w / h < 1.4 ? 54 : 46; this.cam.updateProjectionMatrix(); this.W = w; this.H = h;
+    this.r.setSize(w, h, false); this.cam.aspect = w / h; if (pad > 0) this.cam.setViewOffset(w, h + pad, 0, pad, w, h); else this.cam.clearViewOffset(); this.cam.fov = w / h < 0.9 ? 62 : w / h < 1.4 ? 54 : 46; this.cam.updateProjectionMatrix(); this.W = w; this.H = h;
   }
   start() { if (this.on) return; this.on = true; this.resize(); this.last = performance.now(); this.raf = requestAnimationFrame(this.loop); }
   stop() { this.on = false; cancelAnimationFrame(this.raf); if (this.tag) this.tag.hidden = true; }

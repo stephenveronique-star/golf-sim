@@ -438,8 +438,19 @@ body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 
 .pick .nm { flex: 1; min-width: 0; } .pick .nm b { display: block; font-size: 16px; } .pick .nm span { color: var(--muted); font-size: 13px; }
 .pick .del { padding: 4px 9px; }
 body[data-play=arcade][data-sec=drive] .drive-only, body[data-play=arcade][data-sec=drive] #status { display: none; }
-body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
-#scorePanel { padding: 12px 14px; overflow-y: auto; }
+/* arcade: the course fills the whole screen, with the controls floating over it */
+body[data-play=arcade][data-sec=drive] .bar, body[data-play=arcade][data-sec=drive] .side, body[data-play=arcade] .ready-light { display: none; }
+body[data-play=arcade][data-sec=drive] .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+body[data-play=arcade][data-sec=drive] .app { grid-template-rows: minmax(0, 1fr); }
+body[data-play=arcade][data-v3=on] #v3wrap { position: absolute; inset: 0; }
+body[data-play=arcade][data-v3=on] .round-hud { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; border: 0; background: linear-gradient(rgba(0,6,10,0), rgba(0,6,10,0.78) 26%, rgba(0,6,10,0.92)); padding: 30px 12px calc(10px + env(safe-area-inset-bottom)); text-shadow: 0 1px 3px #000; }
+body[data-play=arcade] #rhMusic, body[data-play=arcade] #rhEnd { display: none; }
+body[data-play=arcade][data-v3=on] #holeCanvas { top: 56px; width: 34%; height: 50px; }
+.g-top { position: absolute; left: 8px; right: 8px; top: calc(6px + env(safe-area-inset-top)); z-index: 4; display: flex; gap: 8px; align-items: center; pointer-events: none; } .g-top[hidden] { display: none; }
+.g-top .sp { flex: 1; }
+.g-top button { pointer-events: auto; min-width: 42px; height: 42px; padding: 0 10px; border-radius: 21px; background: rgba(0,6,10,0.7); border: 1px solid var(--edge); color: #fff; font: 700 16px 'Rajdhani', sans-serif; }
+.g-top button.off { opacity: 0.45; }
+#scorePanel { padding: 4px 0; }
 #scorePanel h4 { margin: 0 0 2px; font-family: var(--data); font-size: 12px; letter-spacing: 0.1em; color: var(--cyan); text-transform: uppercase; }
 #scorePanel .tot { font-family: var(--data); font-size: 30px; color: #fff; text-shadow: 0 0 14px rgba(63,230,255,0.6); margin: 2px 0 8px; } #scorePanel .tot small { font-size: 14px; color: var(--muted); }
 #scorePanel table { width: 100%; border-collapse: collapse; font-size: 14px; } #scorePanel td, #scorePanel th { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--line); } #scorePanel th { color: var(--muted); font-weight: 600; }
@@ -451,6 +462,19 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
 #pickNames input { flex: 1 1 40%; min-width: 0; font: inherit; background: #000; color: var(--text); border: 1px solid var(--edge); border-left-width: 5px; border-radius: 3px; padding: 6px 8px; }
 #rhMusic.off { opacity: 0.4; }
 #scorePanel th i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
+.round-hud .rh-b { display: flex; flex-direction: column; flex-wrap: nowrap; gap: 8px; margin-top: 8px; }
+.rh-row1 { display: flex; gap: 8px; align-items: stretch; } .rh-row1:not(:has(> :not([hidden]))) { display: none; }
+.round-hud .btn.aim { width: 66px; padding: 6px 0 4px; font-size: 20px; line-height: 1; border-radius: 6px; border-color: var(--cyan); color: var(--cyan); }
+.round-hud .btn.aim small { display: block; font-size: 10px; letter-spacing: 0.12em; color: var(--muted); margin-top: 2px; }
+.round-hud .btn.aim:active, .round-hud .btn.big:active { transform: scale(0.97); }
+#rhMid { flex: 1; display: flex; align-items: center; justify-content: center; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; } #rhMid[hidden] { display: none; }
+.round-hud .btn.big { width: 100%; padding: 14px 10px; font-size: 19px; letter-spacing: 0.1em; border-radius: 6px; }
+.rh-row3 { display: flex; gap: 8px; align-items: center; } .rh-row3 .sp { flex: 1; }
+.round-hud .btn.sm { padding: 6px 10px; font-size: 12px; border-radius: 4px; }
+.round-hud #rhClub { border-color: var(--orange); color: var(--orange); }
+.round-hud #rhBag { flex: 1; min-width: 0; font-size: 18px; padding: 10px 8px; border-radius: 6px; border-color: var(--cyan); text-align: center; text-align-last: center; }
+@media (max-height: 430px) and (orientation: landscape) { .round-hud .rh-b { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; } .rh-row1 { flex: 1 1 240px; } .round-hud .btn.big { width: auto; flex: 1 1 160px; padding: 9px; font-size: 16px; } .rh-row3 { flex: 0 0 auto; } }
+#voiceSel { font: inherit; width: 100%; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 8px; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -474,10 +498,11 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
       <canvas id="range"></canvas>
       <div id="v3wrap" hidden><canvas id="hole3d"></canvas><div id="pinTag" hidden></div></div>
       <canvas id="holeCanvas" hidden></canvas>
+      <div class="g-top" id="gTop" hidden><button id="gHome" aria-label="Home">🏠</button><span class="sp"></span><button id="gScore" aria-label="Scorecard">📋</button><button id="gMusic" aria-label="Music on or off">🎵</button><button id="gEnd" aria-label="End round">✕</button></div>
       <div class="round-hud" id="roundHud" hidden>
         <div class="rh-t" id="rhTitle"></div><div class="rh-i" id="rhInfo"></div><div class="rh-m" id="rhMsg"></div><div class="rh-w" id="rhWind"></div>
         <div class="rh-meter" id="rhMeter" hidden><div class="rh-ml" id="rhMeterLbl"></div><div class="rh-row"><div class="rh-track"><span class="zone"></span><i id="rhMark"></i></div><button class="btn primary" id="rhTap">TAP</button></div></div>
-        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhAimL" aria-label="Aim left">◀ Aim</button><button class="btn" id="rhAimR" aria-label="Aim right">Aim ▶</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn" id="rhMusic" aria-label="Music on or off">🎵</button><button class="btn ghost" id="rhEnd">End round</button></div>
+        <div class="rh-b"><button class="btn primary big" id="rhNext" hidden>Next hole ›</button><div class="rh-row1"><button class="btn aim" id="rhAimL" aria-label="Aim left">◀<small>aim</small></button><select id="rhBag" aria-label="Club"></select><span id="rhMid" hidden>Aim your putt</span><button class="btn aim" id="rhAimR" aria-label="Aim right">▶<small>aim</small></button></div><button class="btn primary big" id="rhSim">Play shot</button><div class="rh-row3"><button class="btn sm" id="rhClub"></button><span class="sp"></span><button class="btn sm" id="rhMusic" aria-label="Music on or off">🎵</button><button class="btn ghost sm" id="rhEnd">End round</button></div></div>
       </div>
       <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
       <div class="ready-light" id="readyLight"><b></b><span></span></div>
@@ -499,7 +524,6 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
         <div class="cell"><div class="lbl">Club speed <span class="est">est</span></div><div class="val" id="vClub">—</div></div>
         <div class="cell"><div class="lbl">Spin <span class="est">est</span></div><div class="val" id="vSpin">—</div></div>
       </div>
-      <div id="scorePanel" hidden></div>
       <div class="tips" id="tips" hidden></div>
       <div class="tabs"><button class="on" data-tab="session">This session</button><button data-tab="swing">Swing</button><button data-tab="clubs">My distances</button></div>
       <div class="list" id="list"></div>
@@ -566,9 +590,11 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
   <div class="field"><label>Temperature (°C)</label><input type="number" data-num="tempC" step="1"></div>
   <div class="field"><label>Fairway</label><div class="seg" data-set="firmness"><button data-v="0.6">Soft</button><button data-v="1">Normal</button><button data-v="1.5">Firm</button></div></div>
   <div class="field"><label>Talk to me<span class="hint">Says “Ready”, the carry after each shot, and tips</span></label><div class="seg" data-set="voice"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
+  <div class="field"><label>Which voice<span class="hint">These are the only voices an iPhone lets a web page use. Pick the one you like best; it speaks a sample when you choose it. A natural-sounding voice needs the App Store version.</span></label><select id="voiceSel"></select></div>
   <div class="field"><label>Test sound<span class="hint">Beeps and speaks. Nothing? Check the silent switch and volume.</span></label><button class="btn" id="testSoundBtn">Test sound</button></div>
   <h3>My swing</h3>
   <div class="field"><label>Game sounds<span class="hint">Club strike, splash, applause, birdsong and animals on the course. The iPhone silent switch mutes them.</span></label><div class="seg" data-set="sfx"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
+  <div class="field"><label>Vibration (experiment)<span class="hint">A small buzz when you tap, strike the ball and hole out. Works on Android; on iPhone it uses a workaround that needs iOS 17.4 or newer and may do nothing.</span></label><div class="seg" data-set="haptics"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Music in arcade<span class="hint">A quiet background tune while you play on the phone.</span></label><div class="seg" data-set="music"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Voice commands (experiment)<span class="hint">After the app speaks it listens for a few seconds. Say a club, like “seven iron”, “driver” or “sand wedge”, or “next hole”. Needs the microphone, and may not work on every iPhone.</span></label><div class="seg" data-set="voiceCmd" id="voiceSeg"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Swing tips<span class="hint">After each shot, checks your stance, ball position, sway and weight shift</span></label><div class="seg" data-set="tips"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
@@ -675,6 +701,7 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
 </div></div>
 
 <!-- course designer -->
+<div class="overlay" id="scoreSheet"><div class="sheet diag"><button class="btn ghost close" data-close>Close</button><h2>Scorecard</h2><div id="scorePanel"></div></div></div>
 <div class="overlay" id="pickSheet"><div class="sheet diag">
   <button class="btn ghost close" data-close>Close</button>
   <h2>Choose a course</h2>

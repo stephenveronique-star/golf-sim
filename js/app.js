@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.0.0';
+const VERSION = '3.2.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -19,7 +19,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', myDist: {}, sfx: 'on', music: 'on', players: 1, names: ['Player 1', 'Player 2', 'Player 3', 'Player 4'], autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', myDist: {}, sfx: 'on', music: 'on', voiceName: '', haptics: 'on', players: 1, names: ['Player 1', 'Player 2', 'Player 3', 'Player 4'], autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -73,10 +73,14 @@ $$('.overlay').forEach((o) => o.addEventListener('click', (e) => { if (e.target 
 // audio cue + voice
 let audioCtx = null;
 let audioUnlocked = false, speechOk = null, voicePick = null;
+const NOVELTY = /eddy|flo\b|grandma|grandpa|reed|rocko|sandy|shelley|albert|bad news|bahh|bells|boing|bubbles|cellos|jester|organ|superstar|trinoids|whisper|wobble|zarvox|junior|ralph|fred|kathy|good news/i;
 function pickVoice() {
   try {
     const vs = speechSynthesis.getVoices();
-    voicePick = vs.find((v) => /en-ZA/i.test(v.lang)) || vs.find((v) => /en-GB/i.test(v.lang)) || vs.find((v) => /^en/i.test(v.lang)) || null;
+    // the robot and joke voices are never a good default
+    const en = vs.filter((v) => /^en/i.test(v.lang)), plain = en.filter((v) => !NOVELTY.test(v.name));
+    const want = typeof S !== 'undefined' && S.voiceName ? en.find((v) => v.name === S.voiceName) : null;
+    voicePick = want || plain.find((v) => /daniel|karen|samantha|moira|tessa|serena|kate/i.test(v.name)) || plain.find((v) => /en-ZA|en-GB/i.test(v.lang)) || plain[0] || en[0] || null;
   } catch { /* none */ }
 }
 try { if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; } } catch { /* none */ }
@@ -1038,6 +1042,7 @@ function renderSettings() {
   $$('.seg[data-set]').forEach((seg) => seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', String(S[seg.dataset.set]) === b.dataset.v)));
   $$('[data-num]').forEach((i) => { i.value = S[i.dataset.num]; });
   $$('[data-sel]').forEach((i) => { i.value = S[i.dataset.sel]; });
+  try { const vs = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang)); $('#voiceSel').innerHTML = vs.length ? vs.map((v) => `<option value="${v.name}" ${voicePick && v.name === voicePick.name ? 'selected' : ''}>${v.name} (${v.lang})${NOVELTY.test(v.name) ? ' · novelty' : ''}</option>`).join('') : '<option>No voices offered by this browser</option>'; } catch { /* none */ }
   $('#camSelect').value = S.camId || '';
   $('#about').textContent = `Golf Sim ${VERSION} · capture: ${mode || 'not started'} · camera ${video.videoWidth || 0}×${video.videoHeight || 0} @ ${(eng.fps || 0).toFixed(0)} fps. Shots are stored on this phone only.`;
 }
@@ -1919,6 +1924,7 @@ function showSection(sec) {
   section = sec;
   document.body.dataset.sec = sec;
   $$('#sections button').forEach((b) => b.classList.toggle('on', b.dataset.sec === sec));
+  try { renderScore(); } catch { /* not ready during start-up */ }
   $('#pageInfo').hidden = sec !== 'info';
   $('#pageGame').hidden = sec !== 'game';
   if (sec === 'info') renderInfo();
@@ -2174,7 +2180,7 @@ function roundShot(shot) {
   // wind: a tailwind adds distance, a headwind takes it off, a crosswind pushes the ball sideways (more on longer shots)
   const u = aimDir(h), w = round.wind || { s: 0, a: 0 }, wx = Math.cos(w.a) * w.s, wz = Math.sin(w.a) * w.s, k = Math.min(1.5, shot.total / 150);
   const total = shot.total < 30 ? shot.total : shot.total * (1 + 0.012 * (wx * u.x + wz * u.z) * k), offline = shot.offline + (shot.total < 30 ? 0 : 0.006 * (wx * -u.z + wz * u.x) * shot.total * k);
-  const r = playShot(h, { p: round.p, strokes: round.strokes }, { total, offline, aim: curAim(h) }, Math.random, round.mode === 'arcade');
+  const r = playShot(h, { p: round.p, strokes: round.strokes }, { total, offline, aim: curAim(h), fmt: fmtLie }, Math.random, round.mode === 'arcade');
   if (total >= 230) award('bomb');
   round.aimOff = 0;
   if (r.onGreen) round.putting = true;
@@ -2192,6 +2198,7 @@ function roundShot(shot) {
   saveRound(); renderRound(true);
 }
 // At the net nobody wants to walk to the phone between shots: pick the club, read out what's next and move to the next hole by itself.
+const fmtLie = (m, short) => (short ? (S.dist === 'yd' ? `${(m * 3.281).toFixed(0)} ft` : `${m.toFixed(1)} m`) : `${fmtDist(m)} ${dUnit()}`); // distances in messages, in your units
 const unitWord = () => (S.dist === 'yd' ? 'yards' : 'metres');
 function handsFree(h) {
   if (!allDone()) {
@@ -2213,7 +2220,7 @@ function teeTalk() { // read out the new hole and choose the club for it
 function roundPutt(pt) {
   if (!round || round.done || !round.putting || pendingTurn) return;
   const c = roundCourse(); if (!c) return;
-  const h = c.holes[round.i], r = playPutt(h, { p: round.p, strokes: round.strokes }, { len: pt.len, deg: pt.deg + (round.aimOff || 0) }, round.slope);
+  const h = c.holes[round.i], r = playPutt(h, { p: round.p, strokes: round.strokes }, { len: pt.len, deg: pt.deg + (round.aimOff || 0), fmt: fmtLie }, round.slope);
   round.aimOff = 0; if (r.holed && r.holedFrom >= 6) award('snake');
   round.trail.push({ ...r.to }); round.last = { from: r.from, to: r.to, putt: true, done: !!r.holed, under: !!r.holed && r.strokes < h.par, left: r.left };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; round.sim = true;
@@ -2272,7 +2279,7 @@ function renderRound(animate) {
   $('#rhMsg').textContent = round.msg || '';
   const sc = suggestClub(d);
   $('#rhClub').hidden = round.done || !!meter.phase || round.putting; $('#rhBag').hidden = !!round.putting; $('#rhSim').hidden = round.done || !!meter.phase || pendingTurn;
-  $('#rhSim').textContent = round.putting ? '⛳ Putt' : round.mode === 'arcade' ? '🎮 Play shot' : '🎮 Play shot on phone'; $('#rhNext').hidden = !round.done || !allDone() || pendingTurn;
+  $('#rhSim').textContent = round.putting ? '⛳ Putt' : round.mode === 'arcade' ? 'Play shot' : 'Play this shot on the phone'; $('#rhNext').hidden = !round.done || !allDone() || pendingTurn;
   $('#rhMusic').hidden = round.mode !== 'arcade'; $('#rhMusic').classList.toggle('off', S.music === 'off'); soundScene();
   $('#rhNext').textContent = round.i + 1 >= c.holes.length ? 'Finish round ›' : 'Next hole ›';
   $('#rhAimL').hidden = $('#rhAimR').hidden = round.done || !!meter.phase;
@@ -2283,18 +2290,27 @@ function renderRound(animate) {
       const gx = sl.g * Math.cos(sl.a), gz = sl.g * Math.sin(sl.a), along = gx * u.x + gz * u.z, cross = gx * -u.z + gz * u.x;
       const p1 = Math.abs(cross) < 0.3 ? 'straight' : `breaks ${cross > 0 ? 'right' : 'left'} (${Math.abs(cross).toFixed(1)}%)`, p2 = Math.abs(along) < 0.3 ? 'flat' : `${along > 0 ? 'downhill' : 'uphill'} (${Math.abs(along).toFixed(1)}%)`;
       bits.push(`Green: ${p1}, ${p2} <i style="transform:rotate(${rel(sl.a)}deg)">↑</i>`);
-    } else if (!round.done) bits.push(w.s ? `Wind ${Math.round(w.s * 3.6)} km/h <i style="transform:rotate(${rel(w.a)}deg)">↑</i>` : 'No wind');
+    } else if (!round.done) bits.push(w.s ? `Wind ${S.dist === 'yd' ? Math.round(w.s * 2.237) + ' mph' : Math.round(w.s * 3.6) + ' km/h'} <i style="transform:rotate(${rel(w.a)}deg)">↑</i>` : 'No wind');
     if (ao && !round.done) bits.push(`Aim ${Math.abs(ao)}° ${ao > 0 ? 'right' : 'left'}`);
     $('#rhWind').innerHTML = round.done ? '' : bits.join(' · ');
   }
+  $('#rhMid').hidden = !round.putting || round.done || !!meter.phase;
   $('#rhBag').value = S.club;
   $('#rhClub').textContent = S.club === sc.id ? `${sc.name}${sc.partial ? ' — easy swing' : ''} ✓` : `Use ${sc.name}${sc.partial ? ' (easy swing)' : ''}`;
   $('#rhClub').dataset.club = sc.id;
   view3d(h, animate);
   drawHole(h, animate);
 }
+// ---- a small buzz in the hand. Android has a proper vibration call; iPhone Safari does not, but flipping a hidden
+// switch control makes the phone tick, so that is used there.
+const hapticEl = (() => { const l = document.createElement('label'); l.style.cssText = 'position:fixed;left:-200px;top:0;opacity:0;pointer-events:none'; l.setAttribute('aria-hidden', 'true'); l.innerHTML = '<input type="checkbox" switch tabindex="-1">'; document.body.appendChild(l); return l; })();
+function haptic(n = 1) {
+  if (S.haptics === 'off') return;
+  try { if (navigator.vibrate) { navigator.vibrate(n > 2 ? [20, 50, 20, 50, 30] : n > 1 ? [18, 40, 18] : 14); return; } for (let i = 0; i < n; i++) setTimeout(() => hapticEl.click(), i * 90); } catch { /* not available */ }
+}
 // ---- sounds for what happens on the course
 function gameSound(n, L) {
+  if (n === 'hit') haptic(2); else if (n === 'holed') haptic(3); else if (n === 'putt') haptic(1); else if (n === 'land' && (L.lie === 'water' || L.gator >= 0)) haptic(2);
   if (S.sfx === 'off') return;
   if (n === 'hit') sfx.hit(); else if (n === 'putt') sfx.putt(); else if (n === 'hooves') sfx.hooves();
   else if (n === 'land') {
@@ -2321,7 +2337,7 @@ function view3d(h, animate) {
     return;
   }
   if (v3state !== 'on') return;
-  document.body.dataset.v3 = 'on'; $('#v3wrap').hidden = false; v3.start(); v3.resize();
+  document.body.dataset.v3 = 'on'; $('#v3wrap').hidden = false; v3.start(); v3.resize(round.mode === 'arcade' ? $('#roundHud').offsetHeight * 1.35 : 0);
   const key = `${round.courseId}:${round.i}`, fresh = v3hole !== key;
   if (fresh) { let seed = round.i + 1; for (const ch of String(round.courseId)) seed = (seed * 31 + ch.charCodeAt(0)) % 9973; v3.setHole(h, seed, (allCourses().find((x) => x.id === round.courseId) || {}).theme, round.slope); v3hole = key; }
   const pin = pinOf(h), prev = h.path[h.path.length - 2], d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
@@ -2418,6 +2434,7 @@ function meterStart() {
   meter.raf = requestAnimationFrame(meterLoop);
 }
 function meterTap() {
+  haptic(1);
   const pos = meterPos(performance.now());
   if (meter.phase === 1) {
     meter.power = pos; meter.phase = 2; meter.t0 = performance.now() - 500; $('#rhMeter').dataset.phase = '2'; $('#rhMeterLbl').textContent = 'AIM — tap when the marker is in the green';
@@ -2439,8 +2456,12 @@ function meterTap() {
   roundShot({ total, offline: total * Math.tan((deg * Math.PI) / 180), sim: true });
 }
 $('#rhSim').addEventListener('click', meterStart);
+$('#gHome').addEventListener('click', () => goHome());
+$('#gScore').addEventListener('click', () => { renderScore(); openSheet('#scoreSheet'); });
+$('#gMusic').addEventListener('click', () => $('#rhMusic').click());
+$('#gEnd').addEventListener('click', () => { if (confirm('End this round?')) $('#rhEnd').click(); });
 $('#rhMusic').addEventListener('click', () => { unlockAudio(); S.music = S.music === 'off' ? 'on' : 'off'; saveSettings(); sndState = ''; renderRound(); });
-for (const [id, s] of [['#rhAimL', -1], ['#rhAimR', 1]]) $(id).addEventListener('click', () => { if (!round || round.done) return; const st = round.putting ? 0.5 : 2, lim = round.putting ? 8 : 40; round.aimOff = Math.max(-lim, Math.min(lim, (round.aimOff || 0) + s * st)); saveRound(); renderRound(); });
+for (const [id, s] of [['#rhAimL', -1], ['#rhAimR', 1]]) $(id).addEventListener('click', () => { if (!round || round.done) return; haptic(1); const st = round.putting ? 0.5 : 2, lim = round.putting ? 8 : 40; round.aimOff = Math.max(-lim, Math.min(lim, (round.aimOff || 0) + s * st)); saveRound(); renderRound(); });
 $('#rhTap').addEventListener('click', meterTap);
 $('#rhNext').addEventListener('click', roundNext);
 $('#rhEnd').addEventListener('click', () => { const played = round && round.scores.length, arcade = round && round.mode === 'arcade'; endRound(!!played); toast(played ? 'Round ended. The holes you finished are saved in My Game.' : 'Round ended.'); if (arcade || !running) goHome(); });
@@ -2541,7 +2562,8 @@ $('#startSettings').addEventListener('click', () => { renderSettings(); openShee
 // ---- scorecard beside the course in arcade (the range numbers mean nothing there)
 function renderScore() {
   const arcade = !!round && round.mode === 'arcade'; document.body.dataset.play = arcade ? 'arcade' : round ? 'net' : 'none';
-  const el = $('#scorePanel'); el.hidden = !arcade; if (!arcade) return;
+  const el = $('#scorePanel'); $('#gTop').hidden = !arcade || section !== 'drive'; if (!arcade) return;
+  { const pl = round.scores.filter((x) => x != null), cc = roundCourse(), rel = cc ? pl.reduce((a, b) => a + b, 0) - cc.holes.slice(0, pl.length).reduce((a, h) => a + h.par, 0) : 0; $('#gScore').textContent = `📋 ${multi() ? 'Scores' : pl.length ? (rel === 0 ? 'Level' : rel > 0 ? '+' + rel : rel) : 'Score'}`; $('#gMusic').classList.toggle('off', S.music === 'off'); }
   const c = roundCourse(); if (!c) return;
   if (multi()) {
     const P = round.pl.map((q, i) => (i === round.cur ? { ...q, scores: round.scores } : q)), tot = (q) => q.scores.reduce((a, b) => a + (b || 0), 0);
@@ -2611,3 +2633,4 @@ $('#voiceSeg').addEventListener('click', () => setTimeout(() => {
   if (!SR) { toast('This browser has no voice recognition. On iPhone it needs Safari.', 6000); S.voiceCmd = 'off'; saveSettings(); renderSettings(); return; }
   log('voice commands switched on'); toast('Listening now: say a club, for example “seven iron”.', 5000); listenFor(7000);
 }, 50));
+$('#voiceSel').addEventListener('change', (e) => { S.voiceName = e.target.value; saveSettings(); pickVoice(); unlockAudio(); say('This is how I sound. One hundred and fifty metres to the flag. Seven iron.', true); });

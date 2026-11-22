@@ -89,7 +89,7 @@ export function puttsFrom(d, rnd = Math.random) {
  * Returns the new state plus what happened.
  */
 export function playShot(hole, st, shot, rnd = Math.random, manualPutt = false) {
-  const pin = pinOf(hole), from = st.p;
+  const pin = pinOf(hole), from = st.p, F = shot.fmt || ((m, short) => (short ? `${m.toFixed(1)} m` : `${Math.round(m)} m`));
   const lie0 = st.strokes === 0 ? 'tee' : lieAt(hole, from);
   const f = lie0 === 'rough' ? 0.9 : lie0 === 'bunker' ? 0.75 : 1;
   const aim = shot.aim || aimPoint(hole, from, shot.reach || shot.total);
@@ -103,12 +103,12 @@ export function playShot(hole, st, shot, rnd = Math.random, manualPutt = false) 
   if (lie === 'water' || lie === 'oob') return { ...out, p: from, strokes: strokes + 1, penalty: true, done: false, msg: lie === 'water' ? 'In the water — one penalty stroke, play again from the same spot.' : 'Out of bounds — one penalty stroke, play again from the same spot.' };
   if (lie === 'green') {
     const left = dist(np, pin);
-    if (manualPutt && left >= 0.4) return { ...out, p: np, strokes, done: false, onGreen: true, left, msg: `On the green, ${left.toFixed(1)} m from the flag. Time to putt.` };
+    if (manualPutt && left >= 0.4) return { ...out, p: np, strokes, done: false, onGreen: true, left, msg: `On the green, ${F(left, true)} from the flag. Time to putt.` };
     const putts = puttsFrom(left, rnd);
-    return { ...out, p: pin, strokes: strokes + putts, putts, left, done: true, msg: putts === 0 ? 'Holed it!' : `On the green, ${left.toFixed(1)} m from the flag — ${putts} putt${putts > 1 ? 's' : ''}.` };
+    return { ...out, p: pin, strokes: strokes + putts, putts, left, done: true, msg: putts === 0 ? 'Holed it!' : `On the green, ${F(left, true)} from the flag — ${putts} putt${putts > 1 ? 's' : ''}.` };
   }
   if (strokes >= hole.par * 2) return { ...out, p: np, strokes, done: true, pickedUp: true, msg: 'Picked up at double par — on to the next hole.' };
-  return { ...out, p: np, strokes, done: false, msg: `${lie === 'fairway' ? 'Fairway' : lie === 'bunker' ? 'In the bunker (next shot goes about 25% shorter)' : 'In the rough (next shot goes about 10% shorter)'} — ${Math.round(dist(np, pin))} m to the flag.` };
+  return { ...out, p: np, strokes, done: false, msg: `${lie === 'fairway' ? 'Fairway' : lie === 'bunker' ? 'In the bunker (next shot goes about 25% shorter)' : 'In the rough (next shot goes about 10% shorter)'} — ${F(dist(np, pin))} to the flag.` };
 }
 /** One putt played by hand. putt = { len (metres it would roll), deg (aim error, + = right) } */
 export function playPutt(hole, st, putt, slope = { a: 0, g: 0 }) {
@@ -122,7 +122,7 @@ export function playPutt(hole, st, putt, slope = { a: 0, g: 0 }) {
   const np = { x: from.x + dx * len - dz * side(len), z: from.z + dz * len + dx * side(len) }, left = dist(np, pin);
   if (strokes >= hole.par * 2 + 1) return { from, to: np, p: np, strokes, done: true, pickedUp: true, msg: 'Picked up, on to the next hole.' };
   const why = len < d - 0.03 ? (online ? 'On line but short' : 'Short') : online ? 'Too hard, it ran over the hole' : `Missed ${missAt > 0 ? 'right' : 'left'}`;
-  return { from, to: np, p: np, strokes, done: false, left, msg: `${why}. ${left.toFixed(1)} m left.` };
+  return { from, to: np, p: np, strokes, done: false, left, msg: `${why}. ${putt.fmt ? putt.fmt(left, true) : left.toFixed(1) + ' m'} left.` };
 }
 export function scoreName(strokes, par) {
   const d = strokes - par;
