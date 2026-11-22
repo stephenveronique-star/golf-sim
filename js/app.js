@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.0';
+const VERSION = '3.3.1';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -334,11 +334,14 @@ const pending = new Map();
 // In dim light the ball looks smaller than it is, so its size can't be trusted for distance.
 function isDim() { return (eng.fps || 60) < 50; }
 function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : 0; }
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: +S.hfov, threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1 } }); }
+let camInfo = '', lastPortrait = null;
+// The lens angle in Settings is for the long side of the picture. With the phone upright the picture is narrow, so the angle across it is smaller.
+function effHfov() { const w = eng.w || video.videoWidth || 16, h = eng.h || video.videoHeight || 9; return h > w ? (2 * Math.atan(Math.tan((+S.hfov * Math.PI) / 360) * (w / h)) * 180) / Math.PI : +S.hfov; }
+function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: effHfov(), threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1 } }); }
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
-  if (m.type === 'status') { Object.assign(eng, m); updateReady(); }
+  if (m.type === 'status') { Object.assign(eng, m); updateReady(); const port = m.h > m.w; if (port !== lastPortrait) { lastPortrait = port; sendConfig(); if (port && m.w) log(`picture is upright (${m.w}×${m.h}): lens angle across it taken as ${effHfov().toFixed(0)}°`); } }
   else if (m.type === 'event') onEngineEvent(m.ev);
   else if (m.type === 'setBall') { const r = pending.get(m.id); pending.delete(m.id); if (r) r(m.ball); }
   else if (m.type === 'buf') freeBufs.push(m.buf);
@@ -529,8 +532,12 @@ async function startCamera() {
     const caps = track.getCapabilities ? track.getCapabilities() : {};
     const maxFps = caps.frameRate?.max || 60;
     const want = maxFps >= 119 ? 120 : Math.min(60, maxFps);
-    await track.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: want, min: Math.min(30, want) } });
-  } catch { /* keep what we have */ }
+    camInfo = `camera can do ${caps.frameRate ? `${caps.frameRate.min}–${caps.frameRate.max}` : '?'} pictures a second, up to ${caps.width?.max || '?'}×${caps.height?.max || '?'}`;
+    // insist on the fast rate first (a "nice to have" lets the iPhone settle for 30); only then accept less
+    try { await track.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: Math.min(55, want), ideal: want } }); camInfo += ` · asked for at least ${Math.min(55, want)}: accepted`; }
+    catch (e) { camInfo += ` · asked for at least ${Math.min(55, want)}: refused (${e.name || e.message})`; await track.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: want } }); }
+    const st2 = track.getSettings(); camInfo += ` · now ${st2.width}×${st2.height} @ ${st2.frameRate}`; log(camInfo);
+  } catch (e) { camInfo += ` · set-up error ${e.name || e.message}`; }
   $('#pip').hidden = false;
   video.srcObject = stream;
   try { await video.play(); } catch { /* autoplay */ }
@@ -853,7 +860,7 @@ let movedTimes = [];
 const saidFraming = new Set();
 function ballDistance(b) {
   if (usedBallDist()) return usedBallDist();
-  const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
+  const f = (eng.w / 2) / Math.tan((effHfov() * Math.PI) / 360);
   return (f * BALL.diameter) / b.d;
 }
 // which way the ball flies across the picture: +1 = to the right
@@ -870,7 +877,7 @@ function checkFraming(b) {
   // room for the ball's flight: the ball should sit about a third in from the side away from the net
   const along = targetSide() > 0 ? xf : 1 - xf; // 0 = edge away from the net, 1 = edge nearest the net
   if (S.view !== 'dtl' && along > 0.45 && along <= 0.8) {
-    const shift = (along - 0.33) * 2 * dist * Math.tan((+S.hfov * Math.PI) / 360);
+    const shift = (along - 0.33) * 2 * dist * Math.tan((effHfov() * Math.PI) / 360);
     issues.push({ key: 'flight', say: `Move the phone about ${shift < 0.75 ? 'half a metre' : Math.round(shift) + (Math.round(shift) === 1 ? ' metre' : ' metres')} towards the net, so the camera sees more of the ball's flight.`, text: `The ball is ${Math.round(along * 100)}% of the way across the picture, so the camera only sees a short piece of its flight. Slide the phone about ${shift.toFixed(1)} m towards the net (keep it pointing straight at the player’s line) until the ball sits in the orange “BALL HERE” band on the camera screen.` });
   }
   if (S.view === 'dtl' && (xf < 0.36 || xf > 0.64)) issues.push({ key: 'centre', say: 'Move the phone so the ball is in the middle of the picture, with your target straight above it.', text: 'Phone behind the ball: the ball should be in the middle of the picture (in the orange box) with the target straight above it on the green line.' });
@@ -898,7 +905,7 @@ function updateChips() {
   cp.className = 'chip ' + (eng.procMs < budget * 0.7 ? 'ok' : eng.procMs < budget ? 'warn' : 'bad');
   const cb = $('#cBall');
   if (eng.ball && eng.w) {
-    const f = (eng.w / 2) / Math.tan((+S.hfov * Math.PI) / 360);
+    const f = (eng.w / 2) / Math.tan((effHfov() * Math.PI) / 360);
     const measured = +S.ballDist > 0.5;
     const dist = measured ? +S.ballDist : (f * BALL.diameter) / eng.ball.d;
     const wideL = S.lens === 'wide'; const tooClose = dist < (wideL ? 1.5 : 2.2), tooFar = dist > (wideL ? 2.8 : 4.2);
@@ -1772,6 +1779,7 @@ function reportText(d) {
   const st = d || eng;
   L.push(`GOLF SIM REPORT · ${new Date().toLocaleString()}`);
   L.push(`version ${VERSION} · capture ${mode || 'not started'} · camera ${running ? 'on' : 'off'}`);
+  if (camInfo) L.push(camInfo);
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
   L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount} · detector restarts ${workerRestarts}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
