@@ -431,6 +431,7 @@ body[data-v3=on] .ready-light { left: auto; right: 8px; transform: scale(0.6); t
 .badge { border: 1px solid var(--line); border-radius: 4px; padding: 8px; opacity: 0.4; }
 .badge.got { opacity: 1; border-color: var(--cyan); box-shadow: 0 0 12px rgba(63,230,255,0.25); }
 .badge b { display: block; } .badge span { font-size: 12px; color: var(--muted); } .badge em { font-style: normal; font-size: 22px; }
+body[data-listening=on] #clubBtn { border-color: var(--orange); box-shadow: 0 0 14px rgba(255,122,26,0.7); }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -541,6 +542,7 @@ body[data-v3=on] .ready-light { left: auto; right: 8px; transform: scale(0.6); t
   <div class="field"><label>Talk to me<span class="hint">Says “Ready”, the carry after each shot, and tips</span></label><div class="seg" data-set="voice"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Test sound<span class="hint">Beeps and speaks. Nothing? Check the silent switch and volume.</span></label><button class="btn" id="testSoundBtn">Test sound</button></div>
   <h3>My swing</h3>
+  <div class="field"><label>Voice commands (experiment)<span class="hint">After the app speaks it listens for a few seconds. Say a club, like “seven iron”, “driver” or “sand wedge”, or “next hole”. Needs the microphone, and may not work on every iPhone.</span></label><div class="seg" data-set="voiceCmd" id="voiceSeg"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Swing tips<span class="hint">After each shot, checks your stance, ball position, sway and weight shift</span></label><div class="seg" data-set="tips"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Your height (cm)<span class="hint">Makes the measurements in cm accurate</span></label><input type="number" data-num="heightCm" step="1" min="120" max="220" placeholder="e.g. 180"></div>
   <div class="field"><label>You play</label><div class="seg" data-set="hand"><button data-v="right">Right-handed</button><button data-v="left">Left-handed</button><button data-v="auto">Auto</button></div></div>

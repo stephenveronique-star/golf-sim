@@ -4,9 +4,10 @@ import { SwingCapture } from './posecap.js';
 import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
 import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } from './round.js';
 import { loadThree, Course3D } from './course3d.js';
+import { parseCommand } from './voice.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.6.0';
+const VERSION = '2.7.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -17,7 +18,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -108,6 +109,7 @@ function say(text, force) {
       u.rate = 1.0; u.volume = 1; u.lang = voicePick ? voicePick.lang : 'en-GB';
       if (voicePick) u.voice = voicePick;
       u.onstart = () => { if (speechOk !== true) { speechOk = true; log(`speech working (${voicePick ? voicePick.name : 'default voice'})`); } };
+      u.onend = () => { if (!text.startsWith('OK,')) setTimeout(() => listenFor(7000), 300); }; // after the app speaks, listen for a club name
       u.onerror = (e) => { speechOk = false; log(`speech error: ${e.error || 'unknown'} saying "${text}"`); };
       speechSynthesis.speak(u);
       // iPhone sometimes leaves speech paused in the background
@@ -116,6 +118,31 @@ function say(text, force) {
   };
   // Cancelling and speaking at the same moment makes iPhone drop the words: leave a gap.
   try { if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); setTimeout(go, 120); } else go(); } catch { go(); }
+}
+// ---- voice commands (an experiment): say a club name, or "next hole"
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let srNow = null, srTimer = 0, srErr = '';
+function listenFor(ms) {
+  if (S.voiceCmd !== 'on' || !SR || srNow || document.hidden) return;
+  let rec; try { rec = new SR(); } catch (e) { log(`voice: could not start (${e.message})`); return; }
+  rec.lang = 'en-US'; rec.continuous = false; rec.interimResults = true; rec.maxAlternatives = 3;
+  let done = false;
+  rec.onresult = (e) => {
+    if (done) return;
+    const heard = []; for (const r of e.results) for (const a of r) heard.push(a.transcript);
+    const cmd = heard.map(parseCommand).find(Boolean); if (!cmd) return;
+    done = true; try { rec.abort(); } catch { /* ignore */ }
+    log(`voice: heard "${heard[heard.length - 1]}" → ${cmd.club || cmd.cmd}`); voiceDo(cmd);
+  };
+  rec.onerror = (e) => { if (e.error !== srErr && e.error !== 'no-speech' && e.error !== 'aborted') { srErr = e.error; log(`voice: error ${e.error}`); if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Voice commands were blocked. Allow the microphone and Siri & Dictation for Safari, then switch Voice commands on again.', 8000); } };
+  rec.onend = () => { clearTimeout(srTimer); if (srNow === rec) srNow = null; document.body.dataset.listening = 'off'; };
+  try { rec.start(); srNow = rec; document.body.dataset.listening = 'on'; srTimer = setTimeout(() => { try { rec.abort(); } catch { /* ignore */ } }, ms); } catch (e) { log(`voice: start refused (${e.message})`); }
+}
+function voiceDo(cmd) {
+  if (cmd.club) {
+    S.club = cmd.club; saveSettings(); renderClubs(); if (round) renderRound();
+    const n = clubById(cmd.club).name; beep(1320, 0.08); toast(`🎙 ${n}`, 2500); setTimeout(() => say(`OK, ${n}`), 250);
+  } else if (cmd.cmd === 'next' && round && round.done) { beep(1320, 0.08); roundNext(); }
 }
 function testSound() {
   unlockAudio();
@@ -2447,3 +2474,9 @@ setInterval(() => { if (!document.hidden && eng.state !== 'armed') checkForUpdat
 window.__golf = { get v3() { return v3; }, simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
 $('#testSoundBtn').addEventListener('click', testSound);
 $('#cSound').addEventListener('click', testSound);
+// switching voice commands on is a tap, which is when the iPhone lets us ask for the microphone
+$('#voiceSeg').addEventListener('click', () => setTimeout(() => {
+  if (S.voiceCmd !== 'on') return;
+  if (!SR) { toast('This browser has no voice recognition. On iPhone it needs Safari.', 6000); S.voiceCmd = 'off'; saveSettings(); renderSettings(); return; }
+  log('voice commands switched on'); toast('Listening now: say a club, for example “seven iron”.', 5000); listenFor(7000);
+}, 50));
