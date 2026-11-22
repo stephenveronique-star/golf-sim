@@ -54,7 +54,7 @@ if (process.argv[1].endsWith('behind-test.mjs')) {
     let n = 0, found = 0, eS = 0, eL = 0, eD = 0; const lines = [];
     for (const [i, c] of cases.entries()) for (const phase of [0.15, 0.5, 0.85]) {
       const r = render(c, { ...cfg, phase, seed: 11 + i });
-      const eng = new ShotEngine({ hfovDeg: 67, view: 'dtl', camH: 1, ballDist: cfg.measured ? r.dist : 0 }); const ev = []; eng.onEvent = (e) => ev.push(e);
+      const eng = new ShotEngine({ hfovDeg: 67, view: 'dtl', camH: 1, ballDist: cfg.measured ? r.dist : 0, tipDeg: cfg.sensor ? (cfg.tip ?? 12) * (cfg.sensor === 'flip' ? -1 : 1) : null }); const ev = []; eng.onEvent = (e) => ev.push(e);
       for (const f of r.frames) eng.pushFrame(f.g, r.sc.w, r.sc.h, f.t);
       n++; const s = ev.find((e) => e.type === 'shot');
       if (s) { found++; const L = s.launch; eS += Math.abs(L.speed / c.speed - 1); eL += Math.abs(L.launch - c.launch); eD += Math.abs(L.direction - c.direction); lines.push(`${c.speed}/${c.launch}/${c.direction} → ${L.speed.toFixed(1)}/${L.launch.toFixed(1)}/${L.direction.toFixed(1)} (${L.points} pts)`); }

@@ -542,13 +542,19 @@ export function solveShotBehind(track, tee, cam) {
   const Z0 = cam.ballDist > 0.5 ? cam.ballDist : (f * BALL.diameter) / tee.d; // phone to ball, in a straight line
   const tx = tee.x - cx, ty = tee.y - cy, Zt = (Z0 * f) / Math.hypot(tx, ty, f);
   // how far the camera is tipped down, from its height and how low the ball sits in the picture
-  const hc = Math.min(Z0 * 0.95, cam.camH > 0.05 ? cam.camH : 1), tip = Math.atan2(hc, Math.sqrt(Z0 * Z0 - hc * hc)) - Math.atan2(ty, Math.hypot(f, tx));
+  // Best: the phone's own tilt sensor says how far it is tipped. Then the phone's height is not needed (it follows from the tilt and the distance).
+  const beta = Math.atan2(ty, Math.hypot(f, tx)), okH = (t) => { const h = Z0 * Math.sin(t + beta); return h > 0.03 && h < 2.6; };
+  let hc = Math.min(Z0 * 0.95, cam.camH > 0.05 ? cam.camH : 1), tip = Math.atan2(hc, Math.sqrt(Z0 * Z0 - hc * hc)) - beta, tipFrom = 'height';
+  if (cam.tipDeg != null && isFinite(cam.tipDeg)) {
+    const t = cam.tipDeg / DEG, use = okH(t) ? t : okH(-t) ? -t : null;
+    if (use != null) { tip = use; hc = Z0 * Math.sin(tip + beta); tipFrom = 'sensor'; }
+  }
   const right = track.V.x - tee.x, upC = -(track.V.y - cy);
   const up = upC * Math.cos(tip) - f * Math.sin(tip), fwd = f * Math.cos(tip) + upC * Math.sin(tip);
   const vAxis = track.s * Zt; // speed along the way the camera points
   return {
     speed: (vAxis / f) * Math.hypot(right, upC, f), launch: Math.atan2(up, Math.hypot(fwd, right)) * DEG, direction: Math.atan2(right, fwd) * DEG,
-    targetSign: 0, distanceToBall: Z0, points: track.pts.length, residual: track.residual, view: 'dtl', tipDeg: tip * DEG,
+    targetSign: 0, distanceToBall: Z0, points: track.pts.length, residual: track.residual, view: 'dtl', tipDeg: tip * DEG, tipFrom, camH: hc,
   };
 }
 export function behindDepth(tee, cam) {
@@ -693,7 +699,7 @@ export class ShotEngine {
     fw.push({ t: mid.t, blobs: findMovers(B[n - 3].g, mid.g, rec.g, this.w, this.h, b, { threshold: this.opts.threshold, behind: true }), rec: mid });
     while (fw.length && mid.t - fw[0].t > 0.5) fw.shift();
     if (fw.filter((f) => f.blobs.length).length < 3 || fw[fw.length - 1].blobs.length > 35) return null; // nothing yet, or everything is moving
-    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH };
+    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH, tipDeg: this.opts.tipDeg };
     const track = fitTrackBehind(fw, b, { ...behindDepth(b, cam), fps: this.fps, budget: 6000 });
     if (!track || track.pts.length < 3 || track.residual > Math.max(2, b.d * 0.6)) return null;
     // let the ball fly on until it is lost to sight, so every sighting counts
@@ -730,7 +736,7 @@ export class ShotEngine {
     if (this.opts.snapTimes !== false) this._snapTimes();
     const onsetIdx = this.buf.indexOf(this.onset);
     const b = this.ball, behind = this.opts.view === 'dtl';
-    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH };
+    const cam = { w: this.w, h: this.h, hfovDeg: this.opts.hfovDeg, ballDist: this.opts.ballDist, camH: this.opts.camH, tipDeg: this.opts.tipDeg };
     const i0 = Math.max(1, onsetIdx - 3);
     const i1 = Math.min(this.buf.length - 2, onsetIdx + Math.max(8, Math.round(this.fps * 0.15)));
     const frames = [];

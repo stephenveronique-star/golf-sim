@@ -565,7 +565,7 @@ body[data-play=arcade] #fpsTag { display: none; }
     <div class="chip" id="cProc">Processing …</div>
     <div class="chip" id="cBall">Ball: tap it</div>
     <button class="chip" id="cLevel">Level: tap to check</button>
-    <button class="chip" id="cTee">📍 Tee spot</button><button class="chip" id="cLens"></button><button class="chip" id="cView"></button><button class="chip" id="cFace"></button>
+    <button class="chip" id="cTee">📍 Tee spot</button><button class="chip" id="cLens"></button><button class="chip" id="cDist"></button><button class="chip" id="cView"></button><button class="chip" id="cFace"></button>
     <button class="chip" id="cSound">🔊 Test sound</button>
     <button class="chip" id="cDiag">🛠 Help me fix it</button>
     <button class="chip" id="cDebug">Show what it sees: off</button>
@@ -606,7 +606,7 @@ body[data-play=arcade] #fpsTag { display: none; }
   <div class="field"><label>Your height (cm)<span class="hint">Makes the measurements in cm accurate</span></label><input type="number" data-num="heightCm" step="1" min="120" max="220" placeholder="e.g. 180"></div>
   <div class="field"><label>You play</label><div class="seg" data-set="hand"><button data-v="right">Right-handed</button><button data-v="left">Left-handed</button><button data-v="auto">Auto</button></div></div>
   <div class="field"><label>Where is the phone?<span class="hint">At the side (facing you) = ball numbers + face-on swing checks. Behind the ball = true left/right direction, plus posture, early extension and head height. You can also switch this on the camera screen.</span></label><div class="seg" data-set="view"><button data-v="face">At the side</button><button data-v="dtl">Behind the ball</button></div></div>
-  <div class="field"><label>Phone height above the ground (m)<span class="hint">Only used when the phone is behind the ball. Measure from the ground to the camera lens. It sets the launch angle, so a tape measure is worth it.</span></label><input type="number" data-num="camH" step="0.05" min="0.2" max="2" placeholder="1.0"></div>
+  <div class="field"><label>Phone height above the ground (m)<span class="hint">Only used when the phone is behind the ball and its tilt sensor is off. Normally the app reads the tilt from the phone itself and you can leave this alone.</span></label><input type="number" data-num="camH" step="0.05" min="0.2" max="2" placeholder="1.0"></div>
   <div class="field"><label>Replay after each shot<span class="hint">Shows your swing in slow motion straight after the shot. Closes by itself when the next ball is ready.</span></label><div class="seg" data-set="autoReplay"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <h3>Camera</h3>
   <div class="field"><label>Find the ball by itself<span class="hint">Turn off if it locks onto something that isn’t your ball, then tap the ball instead</span></label><div class="seg" data-set="autoFind"><button data-v="on">On</button><button data-v="off">Off</button></div></div>

@@ -8,7 +8,7 @@ import { parseCommand } from './voice.js';
 import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '3.3.7';
+const VERSION = '3.3.8';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -337,7 +337,7 @@ function isDim() { return (eng.fps || 60) < 50; }
 // Once the ball has been found a few times on the same spot, use the middle value of those looks.
 function sizeDist() {
   if (sizeLog.length < 3 || !eng.w) return 0;
-  const v = sizeLog.map((q) => q.d).sort((a, b) => a - b), med = v[v.length >> 1], f = (eng.w / 2) / Math.tan((effHfov() * Math.PI) / 360);
+  const v = sizeLog.slice(-5).map((q) => q.d).sort((a, b) => a - b), med = v[v.length >> 1], f = (eng.w / 2) / Math.tan((effHfov() * Math.PI) / 360);
   return (f * BALL.diameter) / med;
 }
 function usedBallDist() { return +S.ballDist > 0.5 ? +S.ballDist : isDim() ? (S.lens === 'wide' ? 2 : 3) : sizeDist(); }
@@ -346,7 +346,16 @@ let sizeLog = []; // ball sizes seen on this tee spot, for a steadier distance
 const capNote = (t) => { capInfo += (capInfo ? ' · ' : '') + t; log(`capture: ${t}`); };
 // The lens angle in Settings is for the long side of the picture. With the phone upright the picture is narrow, so the angle across it is smaller.
 function effHfov() { const w = eng.w || video.videoWidth || 16, h = eng.h || video.videoHeight || 9; return h > w ? (2 * Math.atan(Math.tan((+S.hfov * Math.PI) / 360) * (w / h)) * 180) / Math.PI : +S.hfov; }
-function sendConfig() { worker.postMessage({ cmd: 'config', opts: { hfovDeg: effHfov(), threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1, rot: capRot } }); }
+// How far the camera is tipped down, in degrees, from the phone's own tilt sensor (null when the sensor is off).
+// iPhones report the sensor upside down compared with other phones.
+let tipSent = null;
+let motionOn = false, motionAsked = false, gRef = null, gNow = null, tiltDeg = 0, tiltSince = 0, tiltHeld = false;
+function camTip() {
+  if (!gNow) return null; const n = Math.hypot(gNow.x, gNow.y, gNow.z); if (n < 5) return null;
+  const up = (/iPhone|iPad|iPod/.test(navigator.userAgent) ? -gNow.z : gNow.z) / n, tip = (Math.asin(Math.max(-1, Math.min(1, up))) * 180) / Math.PI;
+  return S.face === 'front' ? -tip : tip;
+}
+function sendConfig() { tipSent = camTip(); worker.postMessage({ cmd: 'config', opts: { tipDeg: tipSent, hfovDeg: effHfov(), threshold: +S.threshold, procW: +S.procW, autoFind: S.autoFind !== 'off', ballDist: usedBallDist(), teeSpot: S.teeSpot || null, view: S.view, camH: +S.camH || 1, rot: capRot } }); }
 function onWorkerMessage(e) {
   const m = e.data;
   lastWorkerMsg = performance.now();
@@ -411,8 +420,14 @@ function onEngineEvent(ev) {
   if (ev.type === 'armed') {
     eng.state = 'armed'; eng.ball = ev.ball;
     log(`READY (${ev.how}) ball at ${ev.ball.x.toFixed(0)},${ev.ball.y.toFixed(0)} · ${ev.ball.d.toFixed(1)} px`);
-    if (sizeLog.length && (Math.abs(sizeLog[0].x - ev.ball.x) > eng.w * 0.12 || sizeLog[0].w !== eng.w)) sizeLog = []; // a different spot or picture: start again
-    sizeLog.push({ x: ev.ball.x, d: ev.ball.d, w: eng.w }); if (sizeLog.length > 15) sizeLog.shift();
+    { // the looks must all be from where the phone stands now: start again on a different spot, picture, after a long gap, or when the ball looks a different size twice running
+      const last = sizeLog[sizeLog.length - 1], nowT = Date.now(), v = sizeLog.map((q) => q.d).sort((a, b) => a - b), med = v[v.length >> 1];
+      if (last && (Math.abs(sizeLog[0].x - ev.ball.x) > eng.w * 0.12 || Math.abs(sizeLog[0].y - ev.ball.y) > eng.w * 0.12 || sizeLog[0].w !== eng.w || nowT - last.t > 180000)) sizeLog = [];
+      else if (sizeLog.length >= 3 && Math.abs(ev.ball.d / med - 1) > 0.18) { if (last.odd) sizeLog = [last]; else ev.ball.odd = true; }
+      sizeLog.push({ x: ev.ball.x, y: ev.ball.y, d: ev.ball.d, w: eng.w, t: nowT, odd: !!ev.ball.odd }); if (sizeLog.length > 8) sizeLog.shift();
+    }
+    if (S.view === 'dtl' && camTip() != null && Math.abs(camTip() - (tipSent ?? 99)) > 0.4) sendConfig();
+    if (!(+S.ballDist > 0.5) && !saidFraming.has('dist')) { saidFraming.add('dist'); toast('For true distances, tell me how far the phone is from the ball: tap CAMERA, then the 📏 button.', 7000); }
     checkFraming(ev.ball);
     // remember the phone's position once your hand is off it
     tiltDeg = 0; tiltSince = 0; tiltHeld = false; gRef = gNow ? { ...gNow } : null;
@@ -450,7 +465,7 @@ function onEngineEvent(ev) {
     lastCapture = ev; eng.state = 'waiting'; updateReady();
     setStatus('busy', 'Tee up next ball');
     const L = ev.launch;
-    log(`SHOT${L.view === 'dtl' ? ` (from behind, phone tipped down ${L.tipDeg.toFixed(1)}°)` : ''} speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
+    log(`SHOT${L.view === 'dtl' ? ` (from behind, phone tipped down ${L.tipDeg.toFixed(1)}° by ${L.tipFrom === 'sensor' ? 'its tilt sensor' : 'the height in Settings'}, so about ${L.camH.toFixed(2)} m high)` : ''} speed ${L.speed.toFixed(1)} m/s · launch ${L.launch.toFixed(1)}° · dir ${L.direction.toFixed(1)}° · seen in ${L.points} frames · ${ev.fps.toFixed(0)} fps · ${droppedFrames(ev)} dropped frames · moving bits per frame [${(ev.moving || []).join(',')}]`);
     if ($('#setup').classList.contains('show')) closeSetup(); // show the result
     if (ev.launch.speed >= 3) { const rec = recordShot(ev.launch); if (S.tips === 'on' && ev.tNow != null) runSwingCheck(ev, rec); }
   } else if (ev.type === 'lost') {
@@ -970,7 +985,6 @@ function updateChips() {
 
 // Phone position watch (motion sensor). When the ball is found we remember
 // which way gravity points; if the phone then tilts away from that, we say so.
-let motionOn = false, motionAsked = false, gRef = null, gNow = null, tiltDeg = 0, tiltSince = 0, tiltHeld = false;
 async function startMotion(fromTap) {
   if (motionOn) return true;
   try {
@@ -1111,7 +1125,7 @@ $$('.seg[data-set]').forEach((seg) => seg.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   S[seg.dataset.set] = b.dataset.v; saveSettings(); renderSettings(); applyUnits(); sendConfig();
 }));
-$$('[data-num]').forEach((i) => i.addEventListener('change', () => { const v = parseFloat(i.value); if (!isNaN(v)) { S[i.dataset.num] = v; saveSettings(); sendConfig(); } }));
+$$('[data-num]').forEach((i) => i.addEventListener('change', () => { const v = parseFloat(i.value); if (!isNaN(v)) { S[i.dataset.num] = v; saveSettings(); sendConfig(); } else if (i.dataset.num === 'ballDist') { S.ballDist = ''; saveSettings(); sendConfig(); } renderViewChips(); }));
 $$('[data-sel]').forEach((i) => i.addEventListener('change', () => { S[i.dataset.sel] = i.value; saveSettings(); sendConfig(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; if (running) setStatus('busy', 'Looking for the ball'); }));
 $('#camSelect').addEventListener('change', async (e) => {
   S.camId = e.target.value;
@@ -1838,7 +1852,8 @@ function reportText(d) {
   L.push(`video ${video.videoWidth}×${video.videoHeight} · analysed ${st.w || 0}×${st.h || 0} · ${(st.fps || 0).toFixed(1)} fps · ${(st.procMs || 0).toFixed(1)} ms/frame · frames ${st.frames || 0}`);
   L.push(`picture freezes ${freezeCount} · repeated frames skipped ${staleCount} · detector restarts ${workerRestarts}`);
   L.push(`state ${st.state || 'idle'} · ball ${st.ball ? `${st.ball.x.toFixed(0)},${st.ball.y.toFixed(0)} ${st.ball.d.toFixed(1)}px` : 'none'} · possible balls seen ${d && d.cands ? d.cands.length : '?'}`);
-  L.push(`distance to ball used for speed: ${+S.ballDist > 0.5 ? `${S.ballDist} m (you measured it)` : sizeDist() ? `${sizeDist().toFixed(2)} m (from ${sizeLog.length} looks at the ball's size)` : 'from the ball’s size, one look'}`);
+  if (S.view === 'dtl') L.push(`phone tilt: ${camTip() == null ? 'tilt sensor off, using the phone height in Settings' : `tipped down ${camTip().toFixed(1)}° (tilt sensor)`}`);
+  L.push(`distance to ball used for speed: ${+S.ballDist > 0.5 ? `${S.ballDist} m (you measured it)` : sizeDist() ? `${sizeDist().toFixed(2)} m (from ${Math.min(5, sizeLog.length)} looks at the ball's size)` : 'from the ball’s size, one look'}`);
   L.push(`settings: club ${S.club} · ${S.dist}/${S.speed} · alt ${S.altitude} m · ${S.tempC}°C · fov ${S.hfov}° · width ${S.procW} · sensitivity ${S.threshold} · auto-find ${S.autoFind} · speed adj ${S.speedCal}% · aim ${S.aim}°`);
   L.push(`screen ${innerWidth}×${innerHeight} · ${screen.orientation ? screen.orientation.type : ''} · ${navigator.userAgent}`);
   const ss = sessionShots().slice(-8);
@@ -1960,14 +1975,23 @@ $('#cLens').addEventListener('click', async () => {
 renderLensChip();
 // where the phone stands, and which camera — chosen once on the set-up screen, then hands-free
 function renderViewChips() {
-  const v = $('#cView'), f = $('#cFace');
+  const v = $('#cView'), f = $('#cFace'), dc = $('#cDist');
+  dc.textContent = +S.ballDist > 0.5 ? `📏 Phone to ball: ${S.ballDist} m (tap to change)` : '📏 Phone to ball: not set — tap to enter'; dc.className = 'chip' + (+S.ballDist > 0.5 ? ' on' : '');
   v.textContent = S.view === 'dtl' ? '📍 Phone BEHIND the ball (tap for at the side)' : '📍 Phone at the SIDE (tap for behind the ball)'; v.className = 'chip' + (S.view === 'dtl' ? ' on' : '');
   f.textContent = S.face === 'front' ? '🤳 Front camera — you can see the screen (tap for back)' : '📷 Back camera (tap for front, to see the screen)'; f.className = 'chip' + (S.face === 'front' ? ' on' : '');
 }
+$('#cDist').addEventListener('click', () => {
+  const a = prompt('How far is the phone from the ball, in metres? Measure or pace it out (one big step is about 1 m). Leave empty to let the app guess.', +S.ballDist > 0.5 ? S.ballDist : '3');
+  if (a == null) return;
+  const v = parseFloat(String(a).replace(',', '.'));
+  if (a.trim() === '') S.ballDist = ''; else if (v >= 1 && v <= 8) S.ballDist = v; else { toast('Enter a number between 1 and 8, for example 3'); return; }
+  saveSettings(); sendConfig(); renderViewChips(); renderSettings(); log(`phone to ball distance set to ${S.ballDist || 'auto'}`);
+  toast(S.ballDist ? `Phone to ball: ${S.ballDist} m` : 'Phone to ball: the app will guess from the ball’s size');
+});
 $('#cView').addEventListener('click', () => {
   S.view = S.view === 'dtl' ? 'face' : 'dtl'; S.teeSpot = null; saidFraming.clear();
   saveSettings(); sendConfig(); renderViewChips(); renderTeeChip(); renderSettings(); worker.postMessage({ cmd: 'reset' }); eng.ball = null; log(`phone position set to ${S.view === 'dtl' ? 'behind the ball' : 'at the side'}`);
-  toast(S.view === 'dtl' ? 'Phone BEHIND the ball: stand it 3 m straight behind the ball, about 1 m high, pointing at your target. Put the ball in the orange box with the target on the green line. Direction is measured properly this way.' : 'Phone at the SIDE: stand it 3 m to the side of the ball, facing you.', 11000);
+  toast(S.view === 'dtl' ? 'Phone BEHIND the ball: stand it 3 m straight behind the ball, about knee to waist high, pointing at your target. Put the ball in the orange box with the target on the green line. Direction is measured properly this way.' : 'Phone at the SIDE: stand it 3 m to the side of the ball, facing you.', 11000);
 });
 $('#cFace').addEventListener('click', async () => {
   S.face = S.face === 'front' ? 'back' : 'front'; S.camId = ''; S.teeSpot = null;
