@@ -448,6 +448,9 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
 .cdist { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .cdist b { flex: 1; } .cdist .v { width: 78px; text-align: center; font-family: var(--data); font-size: 15px; } .cdist .src { width: 78px; font-size: 12px; color: var(--muted); }
 .cdist .btn { padding: 6px 13px; font-size: 17px; line-height: 1; }
+#pickNames input { flex: 1 1 40%; min-width: 0; font: inherit; background: #000; color: var(--text); border: 1px solid var(--edge); border-left-width: 5px; border-radius: 3px; padding: 6px 8px; }
+#rhMusic.off { opacity: 0.4; }
+#scorePanel th i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
 #rhBag { font: inherit; font-weight: 700; background: #000; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 4px 6px; }
 </style>
 </head>
@@ -474,7 +477,7 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
       <div class="round-hud" id="roundHud" hidden>
         <div class="rh-t" id="rhTitle"></div><div class="rh-i" id="rhInfo"></div><div class="rh-m" id="rhMsg"></div><div class="rh-w" id="rhWind"></div>
         <div class="rh-meter" id="rhMeter" hidden><div class="rh-ml" id="rhMeterLbl"></div><div class="rh-row"><div class="rh-track"><span class="zone"></span><i id="rhMark"></i></div><button class="btn primary" id="rhTap">TAP</button></div></div>
-        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhAimL" aria-label="Aim left">◀ Aim</button><button class="btn" id="rhAimR" aria-label="Aim right">Aim ▶</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn ghost" id="rhEnd">End round</button></div>
+        <div class="rh-b"><button class="btn primary" id="rhNext" hidden>Next hole ›</button><button class="btn" id="rhAimL" aria-label="Aim left">◀ Aim</button><button class="btn" id="rhAimR" aria-label="Aim right">Aim ▶</button><button class="btn" id="rhClub"></button><select id="rhBag" aria-label="Club"></select><button class="btn" id="rhSim">🎮 Play shot on phone</button><button class="btn" id="rhMusic" aria-label="Music on or off">🎵</button><button class="btn ghost" id="rhEnd">End round</button></div>
       </div>
       <div class="view-toggle"><button class="on" data-view="dtl">Range</button><button data-view="side">Side</button><button data-view="top">Top</button></div>
       <div class="ready-light" id="readyLight"><b></b><span></span></div>
@@ -565,6 +568,8 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
   <div class="field"><label>Talk to me<span class="hint">Says “Ready”, the carry after each shot, and tips</span></label><div class="seg" data-set="voice"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Test sound<span class="hint">Beeps and speaks. Nothing? Check the silent switch and volume.</span></label><button class="btn" id="testSoundBtn">Test sound</button></div>
   <h3>My swing</h3>
+  <div class="field"><label>Game sounds<span class="hint">Club strike, splash, applause, birdsong and animals on the course. The iPhone silent switch mutes them.</span></label><div class="seg" data-set="sfx"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
+  <div class="field"><label>Music in arcade<span class="hint">A quiet background tune while you play on the phone.</span></label><div class="seg" data-set="music"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Voice commands (experiment)<span class="hint">After the app speaks it listens for a few seconds. Say a club, like “seven iron”, “driver” or “sand wedge”, or “next hole”. Needs the microphone, and may not work on every iPhone.</span></label><div class="seg" data-set="voiceCmd" id="voiceSeg"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Swing tips<span class="hint">After each shot, checks your stance, ball position, sway and weight shift</span></label><div class="seg" data-set="tips"><button data-v="on">On</button><button data-v="off">Off</button></div></div>
   <div class="field"><label>Your height (cm)<span class="hint">Makes the measurements in cm accurate</span></label><input type="number" data-num="heightCm" step="1" min="120" max="220" placeholder="e.g. 180"></div>
@@ -673,6 +678,8 @@ body[data-play=arcade] .side > :not(#scorePanel) { display: none; }
 <div class="overlay" id="pickSheet"><div class="sheet diag">
   <button class="btn ghost close" data-close>Close</button>
   <h2>Choose a course</h2>
+  <div class="field" style="margin:6px 0"><label>Players (taking turns on this phone)</label><div class="seg" id="pickPlayers"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button></div></div>
+  <div id="pickNames" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
   <div class="seg" id="pickMode" style="margin:6px 0 4px"><button data-v="arcade">🎮 Arcade · on my phone</button><button data-v="range">🏌️ At my net</button></div>
   <p class="kv" id="pickNote"></p>
   <div id="pickList"></div>

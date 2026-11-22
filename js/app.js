@@ -5,9 +5,10 @@ import { analyseSwing, analyseSwingDTL, angleAt, clubGroup } from './swing.js';
 import { COURSES, buildCourse, playShot, playPutt, pinOf, aimPoint, scoreName } from './round.js';
 import { loadThree, Course3D } from './course3d.js';
 import { parseCommand } from './voice.js';
+import { initSound, sfx, ambience, music } from './sound.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.9.0';
+const VERSION = '3.0.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -18,7 +19,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', myDist: {}, autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', myDist: {}, sfx: 'on', music: 'on', players: 1, names: ['Player 1', 'Player 2', 'Player 3', 'Player 4'], autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -88,6 +89,7 @@ function unlockAudio(first) {
     // a silent buffer played inside the tap fully wakes iPhone audio
     const b = audioCtx.createBuffer(1, 1, 22050), src = audioCtx.createBufferSource();
     src.buffer = b; src.connect(audioCtx.destination); src.start(0);
+    initSound(audioCtx);
   } catch { /* none */ }
   if (!audioUnlocked && first) { audioUnlocked = true; say(first, true); }
 }
@@ -2117,14 +2119,40 @@ function badgesHtml() {
   return `<h3>Badges · ${n} of ${BADGES.length}</h3><div class="badges">${BADGES.map((b) => `<div class="badge ${got[b[0]] ? 'got' : ''}"><em>${got[b[0]] ? b[1] : '🔒'}</em><b>${b[2]}</b><span>${b[3]}</span></div>`).join('')}</div>`;
 }
 function holeBadges(strokes, par) { if (strokes === 1) award('ace'); if (strokes <= par - 2) award('eagle'); else if (strokes === par - 1) award('birdie'); }
-function startRound(courseId, mode = 'range') {
+// ---- more than one player on one phone, taking turns
+const PF = ['p', 'strokes', 'trail', 'done', 'putting', 'msg', 'last', 'aimOff', 'scores'];
+const PCOL = [0xff6a1f, 0x2f8cff, 0xe83e8c, 0x35c46a], PCSS = ['#ff6a1f', '#2f8cff', '#e83e8c', '#35c46a'];
+const multi = () => !!(round && round.pl && round.pl.length > 1);
+const allDone = () => (!multi() ? !!round.done : round.pl.every((q, i) => (i === round.cur ? round.done : q.done)));
+function stash() { if (multi()) for (const k of PF) round.pl[round.cur][k] = round[k]; }
+function unstash(i) { round.cur = i; for (const k of PF) round[k] = round.pl[i][k]; }
+const whoName = () => (multi() ? round.pl[round.cur].name : '');
+let pendingTurn = false, turnTok = 0;
+// safety net in case the animation never reports back; an older timer must never end a newer turn
+function turnLater(ms) { const tok = ++turnTok; setTimeout(() => { if (tok === turnTok) advanceTurn(); }, ms); }
+function advanceTurn() {
+  if (!pendingTurn || !multi()) return;
+  pendingTurn = false; stash();
+  const c = roundCourse(), h = c.holes[round.i];
+  if (round.pl.every((q) => q.done)) { round.msg = `Hole ${round.i + 1}: ${round.pl.map((q) => `${q.name} ${q.scores[round.i]}`).join(' · ')}`; saveRound(); renderRound(); if (round.mode !== 'arcade') handsFree(h); return; }
+  let n = round.cur; do { n = (n + 1) % round.pl.length; } while (round.pl[n].done);
+  if (n !== round.cur) {
+    unstash(n); if (S.sfx !== 'off') sfx.turn(); toast(`${round.pl[n].name}’s turn`, 2500);
+    if (round.mode === 'arcade') say(`${round.pl[n].name}'s turn`);
+  }
+  if (round.mode !== 'arcade') { const pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z), sc = suggestClub(d); S.club = sc.id; saveSettings(); renderClubs(); say(`${round.pl[n].name}. ${fmtDist(d)} ${unitWord()} to the flag. ${sc.name}.`); }
+  saveRound(); renderRound();
+}
+function startRound(courseId, mode = 'range', names = []) {
   const c = allCourses().find((x) => x.id === courseId); if (!c) return;
   const h = buildCourse(c).holes[0];
   round = { courseId, name: c.name, i: 0, p: { ...h.path[0] }, strokes: 0, scores: [], trail: [{ ...h.path[0] }], done: false, msg: mode === 'arcade' ? 'Tee shot. Pick a club, then tap “Play shot”.' : 'Tee shot. Hit into your net, or tap “Play shot on phone”.', sim: false, mode, putting: false };
-  holeSetup(); saveRound(); log(`round started: ${c.name} (${mode})`); teeTalk();
+  if (names.length > 1) { round.pl = names.map((name) => ({ name, p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, putting: false, msg: round.msg, last: null, aimOff: 0, scores: [] })); round.cur = 0; unstash(0); }
+  pendingTurn = false; holeSetup(); saveRound(); log(`round started: ${c.name} (${mode})`); teeTalk();
   $('#start').classList.add('hide'); showSection('drive'); renderRound();
 }
 function endRound(save) {
+  stash(); pendingTurn = false;
   if (round && save && round.scores.length) {
     const c = roundCourse(), pars = c ? c.holes.slice(0, round.scores.length).map((h) => h.par) : [];
     if (c && round.scores.length >= c.holes.length) {
@@ -2132,7 +2160,7 @@ function endRound(save) {
       if (round.scores.reduce((a, b) => a + b, 0) <= pars.reduce((a, b) => a + b, 0)) award('level');
     }
     const rounds = store.get('rounds', []);
-    rounds.push({ id: Date.now(), ts: Date.now(), name: round.name, scores: round.scores, pars, holes: c ? c.holes.length : round.scores.length, sim: round.sim });
+    rounds.push({ id: Date.now(), ts: Date.now(), name: round.name, scores: round.scores, pars, holes: c ? c.holes.length : round.scores.length, sim: round.sim, players: multi() ? round.pl.map((q) => ({ name: q.name, scores: q.scores })) : undefined });
     store.set('rounds', rounds.slice(-50));
     log(`round saved: ${round.name} ${round.scores.reduce((a, b) => a + b, 0)} (par ${pars.reduce((a, b) => a + b, 0)})`);
   }
@@ -2140,7 +2168,7 @@ function endRound(save) {
 }
 // a shot (real or simulated) arrives while a round is on
 function roundShot(shot) {
-  if (!round || round.done || round.putting) return;
+  if (!round || round.done || round.putting || pendingTurn) return;
   const c = roundCourse(); if (!c) return;
   const h = c.holes[round.i];
   // wind: a tailwind adds distance, a headwind takes it off, a crosswind pushes the ball sideways (more on longer shots)
@@ -2151,7 +2179,7 @@ function roundShot(shot) {
   round.aimOff = 0;
   if (r.onGreen) round.putting = true;
   round.trail.push({ ...r.to, bad: !!r.penalty }); if (r.penalty) round.trail.push({ ...r.from });
-  round.last = { from: r.from, to: r.to, penalty: !!r.penalty, done: !!r.done, apex: shot.apex };
+  round.last = { from: r.from, to: r.to, penalty: !!r.penalty, done: !!r.done, apex: shot.apex, lie: r.lie, gator: r.gator ?? -1, under: !!r.done && r.strokes < h.par };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; if (shot.sim) round.sim = true;
   if (r.done) {
     round.done = true; round.scores[round.i] = r.strokes; if (!r.pickedUp) holeBadges(r.strokes, h.par);
@@ -2159,33 +2187,35 @@ function roundShot(shot) {
     round.msg = `${r.msg} ${nm ? nm + ' — ' : ''}${r.strokes} on a par ${h.par}.`;
     setTimeout(() => say(nm || 'Next hole'), shot.sim ? 300 : 3200);
   }
-  if (round.mode !== 'arcade' && !shot.sim) handsFree(h);
+  if (round.mode !== 'arcade' && !shot.sim && !multi()) handsFree(h);
+  if (multi()) { stash(); pendingTurn = true; turnLater(v3state === 'on' ? 16000 : 1600); }
   saveRound(); renderRound(true);
 }
 // At the net nobody wants to walk to the phone between shots: pick the club, read out what's next and move to the next hole by itself.
 const unitWord = () => (S.dist === 'yd' ? 'yards' : 'metres');
 function handsFree(h) {
-  if (!round.done) {
+  if (!allDone()) {
+    if (multi()) return;
     const pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z), sc = suggestClub(d);
     S.club = sc.id; saveSettings(); renderClubs();
     setTimeout(() => say(`${fmtDist(d)} ${unitWord()} to the flag. ${sc.name}${sc.partial ? ', easy swing' : ''}.`), 5500);
   } else {
     const i = round.i, id = round.courseId;
-    setTimeout(() => { if (round && round.done && round.i === i && round.courseId === id) roundNext(); }, 11000);
+    setTimeout(() => { if (round && allDone() && round.i === i && round.courseId === id) roundNext(); }, 11000);
   }
 }
 function teeTalk() { // read out the new hole and choose the club for it
   if (!round || round.mode === 'arcade') return;
   const c = roundCourse(), h = c.holes[round.i], sc = suggestClub(h.len);
   S.club = sc.id; saveSettings(); renderClubs();
-  setTimeout(() => say(`Hole ${round.i + 1}. Par ${h.par}. ${fmtDist(h.len)} ${unitWord()}. ${sc.name}.`), 900);
+  setTimeout(() => say(`${multi() ? whoName() + ' to play. ' : ''}Hole ${round.i + 1}. Par ${h.par}. ${fmtDist(h.len)} ${unitWord()}. ${sc.name}.`), 900);
 }
 function roundPutt(pt) {
-  if (!round || round.done || !round.putting) return;
+  if (!round || round.done || !round.putting || pendingTurn) return;
   const c = roundCourse(); if (!c) return;
   const h = c.holes[round.i], r = playPutt(h, { p: round.p, strokes: round.strokes }, { len: pt.len, deg: pt.deg + (round.aimOff || 0) }, round.slope);
   round.aimOff = 0; if (r.holed && r.holedFrom >= 6) award('snake');
-  round.trail.push({ ...r.to }); round.last = { from: r.from, to: r.to, putt: true, done: !!r.holed };
+  round.trail.push({ ...r.to }); round.last = { from: r.from, to: r.to, putt: true, done: !!r.holed, under: !!r.holed && r.strokes < h.par, left: r.left };
   round.p = r.p; round.strokes = r.strokes; round.msg = r.msg; round.sim = true;
   if (r.done) {
     round.done = true; round.putting = false; round.scores[round.i] = r.strokes; if (!r.pickedUp) holeBadges(r.strokes, h.par);
@@ -2193,11 +2223,18 @@ function roundPutt(pt) {
     round.msg = `${r.msg} ${nm ? nm + ', ' : ''}${r.strokes} on a par ${h.par}.`;
     setTimeout(() => say(nm || 'Next hole'), 2200);
   }
+  if (multi()) { stash(); pendingTurn = true; turnLater(v3state === 'on' ? 9000 : 1600); }
   saveRound(); renderRound(true);
 }
 const distTxt = (d) => (round && round.putting ? (S.dist === 'yd' ? `${(d * 3.281).toFixed(0)} ft` : `${d.toFixed(1)} m`) : `${fmtDist(d)} ${dUnit()}`);
 function roundNext() {
   const c = roundCourse(); if (!round || !c) return;
+  stash(); pendingTurn = false;
+  if (round.i + 1 >= c.holes.length && multi()) {
+    const tots = round.pl.map((q) => ({ n: q.name, t: q.scores.reduce((a, b) => a + (b || 0), 0) })).sort((a, b) => a.t - b.t), tie = tots[1].t === tots[0].t;
+    toast(`${tie ? 'It’s a tie!' : `🏆 ${tots[0].n} wins!`} ${tots.map((x) => `${x.n} ${x.t}`).join(' · ')}. Saved in My Game.`, 9000); say(tie ? 'It is a tie' : `${tots[0].n} wins`); if (S.sfx !== 'off') sfx.clap(2);
+    endRound(true); showSection('game'); return;
+  }
   if (round.i + 1 >= c.holes.length) {
     const tot = round.scores.reduce((a, b) => a + b, 0), par = c.holes.reduce((a, h) => a + h.par, 0);
     toast(`Round finished: ${tot} (${tot === par ? 'level par' : tot > par ? '+' + (tot - par) : tot - par}). Saved in My Game.`, 7000);
@@ -2205,6 +2242,10 @@ function roundNext() {
   }
   round.i++; const h = c.holes[round.i];
   Object.assign(round, { p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, putting: false, last: null, msg: 'Tee shot.' });
+  if (multi()) { // everyone back to the tee; lowest score on the last hole plays first
+    let first = 0; round.pl.forEach((q, i) => { Object.assign(q, { p: { ...h.path[0] }, strokes: 0, trail: [{ ...h.path[0] }], done: false, putting: false, last: null, aimOff: 0, msg: 'Tee shot.' }); if ((q.scores[round.i - 1] ?? 99) < (round.pl[first].scores[round.i - 1] ?? 99)) first = i; });
+    unstash(first);
+  }
   holeSetup(); teeTalk();
   saveRound(); renderRound();
 }
@@ -2219,17 +2260,20 @@ function simShot() {
 function renderRound(animate) {
   const on = !!round; document.body.dataset.round = on ? 'on' : 'off';
   $('#holeCanvas').hidden = !on; $('#roundHud').hidden = !on; renderScore();
-  if (!on) { $('#v3wrap').hidden = true; document.body.dataset.v3 = 'off'; if (v3) v3.stop(); return; }
+  if (!on) { soundScene(); $('#v3wrap').hidden = true; document.body.dataset.v3 = 'off'; if (v3) v3.stop(); return; }
   const c = roundCourse(); if (!c) { endRound(false); return; }
   const h = c.holes[round.i], pin = pinOf(h), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z);
   const soFar = round.scores.reduce((a, b) => a + (b || 0), 0), parSoFar = c.holes.slice(0, round.scores.filter((x) => x != null).length).reduce((a, x) => a + x.par, 0);
   const rel = soFar - parSoFar;
   $('#rhTitle').textContent = `Hole ${round.i + 1}/${c.holes.length} · Par ${h.par} · ${fmtDist(h.len)} ${dUnit()}`;
-  $('#rhInfo').textContent = round.done ? `Round: ${soFar} (${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel})` : `${round.putting ? 'Putting · shot' : 'Shot'} ${round.strokes + 1} · ${distTxt(d)} to the flag${round.scores.length ? ` · round ${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel}` : ''}`;
+  const who = multi() ? `${whoName()} · ` : '';
+  $('#rhInfo').style.color = multi() ? PCSS[round.cur] : '';
+  $('#rhInfo').textContent = who + (round.done ? `Round: ${soFar} (${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel})` : `${round.putting ? 'Putting · shot' : 'Shot'} ${round.strokes + 1} · ${distTxt(d)} to the flag${round.scores.length ? ` · round ${rel === 0 ? 'level' : rel > 0 ? '+' + rel : rel}` : ''}`);
   $('#rhMsg').textContent = round.msg || '';
   const sc = suggestClub(d);
-  $('#rhClub').hidden = round.done || !!meter.phase || round.putting; $('#rhBag').hidden = !!round.putting; $('#rhSim').hidden = round.done || !!meter.phase;
-  $('#rhSim').textContent = round.putting ? '⛳ Putt' : round.mode === 'arcade' ? '🎮 Play shot' : '🎮 Play shot on phone'; $('#rhNext').hidden = !round.done;
+  $('#rhClub').hidden = round.done || !!meter.phase || round.putting; $('#rhBag').hidden = !!round.putting; $('#rhSim').hidden = round.done || !!meter.phase || pendingTurn;
+  $('#rhSim').textContent = round.putting ? '⛳ Putt' : round.mode === 'arcade' ? '🎮 Play shot' : '🎮 Play shot on phone'; $('#rhNext').hidden = !round.done || !allDone() || pendingTurn;
+  $('#rhMusic').hidden = round.mode !== 'arcade'; $('#rhMusic').classList.toggle('off', S.music === 'off'); soundScene();
   $('#rhNext').textContent = round.i + 1 >= c.holes.length ? 'Finish round ›' : 'Next hole ›';
   $('#rhAimL').hidden = $('#rhAimR').hidden = round.done || !!meter.phase;
   { // wind, slope and aim line
@@ -2249,6 +2293,24 @@ function renderRound(animate) {
   view3d(h, animate);
   drawHole(h, animate);
 }
+// ---- sounds for what happens on the course
+function gameSound(n, L) {
+  if (S.sfx === 'off') return;
+  if (n === 'hit') sfx.hit(); else if (n === 'putt') sfx.putt(); else if (n === 'hooves') sfx.hooves();
+  else if (n === 'land') {
+    if (L.gator >= 0) { sfx.thud(); setTimeout(() => sfx.snap(), 450); setTimeout(() => sfx.groan(), 1300); }
+    else if (L.lie === 'water') { sfx.splash(); setTimeout(() => sfx.groan(), 500); }
+    else if (L.lie === 'oob') { sfx.thud(); setTimeout(() => sfx.groan(), 300); }
+    else if (L.lie === 'bunker') sfx.sand();
+    else { sfx.thud(); if (L.lie === 'green') setTimeout(() => sfx.clap(1), 350); }
+  } else if (n === 'holed') { sfx.cup(); setTimeout(() => sfx.clap(L.under ? 2 : 1.3), 300); }
+  else if (n === 'stop' && L.left < 1) sfx.groan();
+}
+let sndState = '';
+function soundScene() { // birdsong whenever a round is on screen, music only in arcade
+  const amb = !!round && S.sfx !== 'off', mus = !!round && round.mode === 'arcade' && S.music !== 'off', st = `${amb}${mus}`;
+  if (st === sndState) return; sndState = st; ambience(amb); music(mus);
+}
 // ---- the 3D view from behind the ball (falls back to the flat map if the phone can't do 3D)
 let v3 = null, v3state = 'none', v3hole = '';
 function view3d(h, animate) {
@@ -2267,12 +2329,15 @@ function view3d(h, animate) {
   const aim = round.done ? { x: pin.x * 2 - prev.x, z: pin.z * 2 - prev.z } : curAim(h);
   let ring = null;
   if (!round.done && !round.putting) { const L = Math.hypot(aim.x - round.p.x, aim.z - round.p.z) || 1, reach = clubAvg(S.club); ring = { x: round.p.x + ((aim.x - round.p.x) / L) * reach, z: round.p.z + ((aim.z - round.p.z) / L) * reach }; }
+  v3.setPlayers(multi() ? PCOL[round.cur] : PCOL[0], multi() ? round.pl.map((q, i) => ({ q, i })).filter((o) => o.i !== round.cur && !o.q.done && o.q.strokes > 0).map((o) => ({ p: o.q.p, color: PCOL[o.i] })) : []);
   v3.setState(round.p, aim, ring, !fresh, !!round.putting, !!round.done);
   if (animate && round.last) { // keep the result back until the ball has landed
     const m = $('#rhMsg'), i = $('#rhInfo'), mt = m.textContent, it = i.textContent, nx = $('#rhNext').hidden; m.textContent = 'Ball in the air…'; $('#rhNext').hidden = true;
     const go = round.last.putt ? (o) => v3.roll(round.last.from, round.last.to, o) : (o) => v3.fly(round.last.from, round.last.to, o);
     m.textContent = round.last.putt ? 'Rolling…' : m.textContent; const wait = m.textContent;
-    go({ apex: round.last.apex, done: round.last.done, penalty: round.last.penalty, then: () => { if (round && m.textContent === wait) { m.textContent = mt; i.textContent = it; $('#rhNext').hidden = nx; } } });
+    const L = { ...round.last };
+    go({ apex: L.apex, done: L.done, penalty: L.penalty, gator: L.gator, ev: (n) => gameSound(n, L), then: () => { if (round && m.textContent === wait) { m.textContent = mt; i.textContent = it; $('#rhNext').hidden = nx; } if (pendingTurn) turnLater(900); } });
+  } else if (animate && round.last && S.sfx !== 'off') { round.last.putt ? sfx.putt() : sfx.hit();
   }
 }
 let holeAnim = 0;
@@ -2342,7 +2407,8 @@ function meterLoop(now) {
 }
 function setZone(l, w) { const z = $('#rhMeter .zone'); l = Math.max(0, Math.min(100 - w, l)); z.style.left = `${l}%`; z.style.width = `${w}%`; }
 function meterStart() {
-  if (!round || round.done) return;
+  if (!round || round.done || pendingTurn) return;
+  unlockAudio(); soundScene();
   meter.phase = 1; meter.t0 = performance.now(); meter.putt = null;
   if (round.putting) { const pin = pinOf(roundCourse().holes[round.i]), d = Math.hypot(round.p.x - pin.x, round.p.z - pin.z); meter.putt = { d, max: Math.max(d * 1.6, 2.5) }; }
   const pt = meter.putt;
@@ -2373,6 +2439,7 @@ function meterTap() {
   roundShot({ total, offline: total * Math.tan((deg * Math.PI) / 180), sim: true });
 }
 $('#rhSim').addEventListener('click', meterStart);
+$('#rhMusic').addEventListener('click', () => { unlockAudio(); S.music = S.music === 'off' ? 'on' : 'off'; saveSettings(); sndState = ''; renderRound(); });
 for (const [id, s] of [['#rhAimL', -1], ['#rhAimR', 1]]) $(id).addEventListener('click', () => { if (!round || round.done) return; const st = round.putting ? 0.5 : 2, lim = round.putting ? 8 : 40; round.aimOff = Math.max(-lim, Math.min(lim, (round.aimOff || 0) + s * st)); saveRound(); renderRound(); });
 $('#rhTap').addEventListener('click', meterTap);
 $('#rhNext').addEventListener('click', roundNext);
@@ -2418,6 +2485,7 @@ function roundCardHtml() {
   h += '<h3>My rounds</h3>';
   if (!rounds.length) h += '<div class="empty">No rounds yet.</div>';
   for (const r of rounds.slice(0, 10)) {
+    if (r.players) { const ts = r.players.map((q) => ({ n: q.name, t: q.scores.reduce((a, b) => a + (b || 0), 0) })).sort((a, b) => a.t - b.t); h += `<div class="sess"><div class="sess-h" style="cursor:default"><div><b>${r.name}</b> <span class="sub">${fmtDay(r.ts)} · ${r.players.length} players</span><div class="sub">${ts.map((x, i) => `${i === 0 && (ts[1].t !== x.t) ? '🏆 ' : ''}${x.n} ${x.t}`).join(' · ')}</div></div></div></div>`; continue; }
     const tot = r.scores.reduce((a, b) => a + b, 0), par = r.pars.reduce((a, b) => a + b, 0), rel = tot - par;
     h += `<div class="sess"><div class="sess-h" style="cursor:default"><div><b>${r.name}</b> <span class="sub">${fmtDay(r.ts)}${r.scores.length < r.holes ? ` · ${r.scores.length} of ${r.holes} holes` : ''}${r.sim ? ' · includes simulated shots' : ''}</span>
       <div class="sub">${r.scores.map((s, i) => `<span style="color:${s < r.pars[i] ? 'var(--cyan)' : s > r.pars[i] ? 'var(--orange)' : 'var(--text)'}">${s}</span>`).join(' ')}</div></div>
@@ -2435,10 +2503,12 @@ renderRound();
 
 // ---- choosing a course (one place for arcade and for rounds at the net)
 let pickMode = 'arcade';
-const THEME_SW = { park: 'linear-gradient(#6fb0e8 45%, #3d8a34 45%)', links: 'linear-gradient(#6fb0e8 40%, #3f7fb5 40% 50%, #9a9450 50%)', desert: 'linear-gradient(#7fb6e6 40%, #b56f4d 40% 55%, #5a9a3a 55%)', forest: 'linear-gradient(#6fa8d8 30%, #1f4a20 30% 60%, #38782d 60%)' };
+const THEME_SW = { swamp: 'linear-gradient(#7fb0d0 35%, #2d7fb0 35% 55%, #2b4a22 55%)', park: 'linear-gradient(#6fb0e8 45%, #3d8a34 45%)', links: 'linear-gradient(#6fb0e8 40%, #3f7fb5 40% 50%, #9a9450 50%)', desert: 'linear-gradient(#7fb6e6 40%, #b56f4d 40% 55%, #5a9a3a 55%)', forest: 'linear-gradient(#6fa8d8 30%, #1f4a20 30% 60%, #38782d 60%)' };
 function openPicker(mode) {
   pickMode = mode === 'range' ? 'range' : 'arcade';
   $$('#pickMode button').forEach((b) => b.classList.toggle('on', b.dataset.v === pickMode));
+  $$('#pickPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === (+S.players || 1)));
+  $('#pickNames').innerHTML = (+S.players || 1) > 1 ? S.names.slice(0, +S.players).map((n, i) => `<input data-pn="${i}" value="${String(n).replace(/"/g, '')}" maxlength="12" style="border-left-color:${PCSS[i]}" aria-label="Player ${i + 1} name">`).join('') : '';
   $('#pickNote').textContent = (pickMode === 'arcade' ? 'Play on the phone: pick a club, tap for power and aim, and putt out.' : 'Hit real shots into your net and the app plays them down the hole. It picks the club and moves on by itself, so you don’t need to touch the phone.') + (round ? ' Starting a new round ends the one in progress.' : '');
   $('#pickList').innerHTML = allCourses().map((c) => { const b = buildCourse(c); return `<div class="pick" data-course="${c.id}"><div class="sw" style="background:${THEME_SW[c.theme] || THEME_SW.park}"></div><div class="nm"><b>${c.name}${c.custom ? ' (mine)' : ''}</b><span>${b.holes.length} holes · par ${b.holes.reduce((a, h) => a + h.par, 0)} · ${fmtDist(b.holes.reduce((a, h) => a + h.len, 0))} ${dUnit()}</span></div>${c.custom ? `<button class="btn ghost del" data-del="${c.id}" aria-label="Delete this course">✕</button>` : ''}<span class="go">›</span></div>`; }).join('');
   openSheet('#pickSheet');
@@ -2449,9 +2519,11 @@ $('#pickList').addEventListener('click', async (e) => {
   if (del) { customCourses = customCourses.filter((x) => x.id !== del.dataset.del); store.set('courses', customCourses); openPicker(pickMode); toast('Course deleted'); return; }
   const row = e.target.closest('[data-course]'); if (!row) return;
   closeSheets(); unlockAudio('Round');
-  startRound(row.dataset.course, pickMode);
+  const n = +S.players || 1; startRound(row.dataset.course, pickMode, n > 1 ? S.names.slice(0, n).map((x, i) => String(x).trim() || `Player ${i + 1}`) : []);
   if (pickMode === 'range' && !running) { startMotion(true); openSetup(); toast('Set up the camera, then hit your tee shot.', 5000); }
 });
+$('#pickPlayers').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.players = +b.dataset.v; saveSettings(); openPicker(pickMode); });
+$('#pickNames').addEventListener('input', (e) => { const i = e.target.dataset.pn; if (i == null) return; S.names = S.names.slice(); S.names[+i] = e.target.value; saveSettings(); });
 $('#pickDesign').addEventListener('click', () => { closeSheets(); openDesigner(); });
 
 // ---- home: one way back to the front page from anywhere
@@ -2471,6 +2543,11 @@ function renderScore() {
   const arcade = !!round && round.mode === 'arcade'; document.body.dataset.play = arcade ? 'arcade' : round ? 'net' : 'none';
   const el = $('#scorePanel'); el.hidden = !arcade; if (!arcade) return;
   const c = roundCourse(); if (!c) return;
+  if (multi()) {
+    const P = round.pl.map((q, i) => (i === round.cur ? { ...q, scores: round.scores } : q)), tot = (q) => q.scores.reduce((a, b) => a + (b || 0), 0);
+    el.innerHTML = `<h4>${c.name}</h4><table><tr><th>Hole</th><th>Par</th>${P.map((q, i) => `<th><i style="background:${PCSS[i]}"></i>${q.name}</th>`).join('')}</tr>${c.holes.map((h, i) => `<tr class="${i === round.i ? 'now' : ''}"><td>${i + 1}</td><td>${h.par}</td>${P.map((q) => { const sc = q.scores[i]; return `<td class="${sc == null ? '' : sc < h.par ? 'u' : sc > h.par ? 'o' : ''}">${sc ?? ''}</td>`; }).join('')}</tr>`).join('')}<tr><th>Total</th><th></th>${P.map((q) => `<th style="color:#fff">${tot(q) || ''}</th>`).join('')}</tr></table>`;
+    return;
+  }
   const played = round.scores.filter((x) => x != null), tot = played.reduce((a, b) => a + b, 0), par = c.holes.slice(0, played.length).reduce((a, h) => a + h.par, 0), rel = tot - par;
   let run = 0;
   el.innerHTML = `<h4>${c.name}</h4><div class="tot">${played.length ? `${rel === 0 ? 'Level' : rel > 0 ? '+' + rel : rel} <small>${tot} shots · ${played.length} of ${c.holes.length} holes</small>` : '<small>Scorecard</small>'}</div>
@@ -2525,7 +2602,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 setInterval(() => { if (!document.hidden && eng.state !== 'armed') checkForUpdate(); }, 10 * 60 * 1000);
 
 // expose for automated testing
-window.__golf = { get v3() { return v3; }, simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
+window.__golf = { get v3() { return v3; }, get pending() { return pendingTurn; }, simShot, roundNext, get round() { return round; }, eng, recordShot, simulate, get shots() { return shots; }, startCamera, setBall, S, get mode() { return mode; }, get lastCapture() { return lastCapture; }, onEvent: null };
 $('#testSoundBtn').addEventListener('click', testSound);
 $('#cSound').addEventListener('click', testSound);
 // switching voice commands on is a tap, which is when the iPhone lets us ask for the microphone

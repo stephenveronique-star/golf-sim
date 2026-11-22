@@ -12,10 +12,11 @@ function rng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525 + 
 
 // each kind of course has its own colours and amount of trees
 const THEMES = {
-  park: { deep: '#234f20', rough: ['#27561f', '#2b5d22', '#2f6525'], cut: '#3d802e', land: 0x2f6a2b, trees: 380, pine: 0.34, thin: 0.55, hills: [0x9db7cf, 0x7f9f9c] },
+  park: { deep: '#234f20', rough: ['#27561f', '#2b5d22', '#2f6525'], cut: '#3d802e', land: 0x2f6a2b, trees: 380, pine: 0.34, thin: 0.55, hills: [0x9db7cf, 0x7f9f9c], animals: 'buck' },
   links: { deep: '#8b8546', rough: ['#8f8a49', '#8d904a', '#869647'], cut: '#5c9a3b', land: 0x8b8546, trees: 26, pine: 0.15, thin: 0.9, hills: [0x4f8fc4, 0x3f7fb5] },
   desert: { deep: '#b88758', rough: ['#bb8c5c', '#bd9160', '#a99a5c'], cut: '#5a9a3a', land: 0xb88758, trees: 60, pine: 0.1, thin: 0.8, hills: [0xd0a98c, 0xb56f4d] },
-  forest: { deep: '#1a401e', rough: ['#1e4720', '#235023', '#295a26'], cut: '#38782d', land: 0x1f4a20, trees: 560, pine: 0.8, thin: 0.3, hills: [0x8fb0c4, 0x5f8a78] },
+  swamp: { deep: '#27421f', rough: ['#2b4a22', '#305325', '#365d28'], cut: '#3f8a34', land: 0x2b4a22, trees: 300, pine: 0.05, thin: 0.6, hills: [0x9fc0cf, 0x6f9a86], animals: 'gator' },
+  forest: { deep: '#1a401e', rough: ['#1e4720', '#235023', '#295a26'], cut: '#38782d', land: 0x1f4a20, trees: 560, pine: 0.8, thin: 0.3, hills: [0x8fb0c4, 0x5f8a78], animals: 'buck' },
 };
 const SUN = { x: -0.45, y: 0.62, z: -0.64 }; // direction towards the sun
 
@@ -46,7 +47,7 @@ function buildGolfer() {
   limb('legL', trouser, 0.075); limb('legR', trouser, 0.075); limb('torso', shirt, 0.165); limb('armL', shirt, 0.045); limb('armR', shirt, 0.045); limb('foreL', skin, 0.038); limb('foreR', skin, 0.038); limb('club', steel, 0.011); limb('neck', skin, 0.05);
   ball('hips', trouser, 0.17); ball('head', skin, 0.105); ball('cap', white, 0.11); ball('shL', shirt, 0.075); ball('shR', shirt, 0.075); ball('hands', white, 0.055); ball('footL', dark, 0.07); ball('footR', dark, 0.07); ball('clubhead', dark, 0.05);
   parts.footL.scale.set(0.07, 0.05, 0.13); parts.footR.scale.set(0.07, 0.05, 0.13); parts.clubhead.scale.set(0.035, 0.03, 0.06); parts.cap.scale.set(0.112, 0.07, 0.125);
-  g.userData.parts = parts; return g;
+  g.userData.parts = parts; g.userData.shirt = shirt; return g;
 }
 const UP = { x: 0, y: 1, z: 0 };
 function setLimb(o, a, b) {
@@ -67,6 +68,30 @@ export function poseGolfer(g, t) {
   setLimb(P.armL, shL, eL); setLimb(P.foreL, eL, s.h); setLimb(P.armR, shR, eR); setLimb(P.foreR, eR, s.h);
   P.hands.position.set(...s.h);
   const ch = [s.h[0] + s.c[0], Math.max(0.03, s.h[1] + s.c[1]), s.h[2] + s.c[2]]; setLimb(P.club, s.h, ch); P.clubhead.position.set(...ch);
+}
+
+// ---- simple animals built from boxes
+function box(g, mat, w, h, d, x, y, z, rz = 0) { const m = new T.Mesh(new T.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.z = rz; g.add(m); return m; }
+function buildBuck() { // a springbok-like antelope, facing +x
+  const g = new T.Group(), tan = new T.MeshLambertMaterial({ color: 0xc58a4a }), white = new T.MeshLambertMaterial({ color: 0xf2ead8 }), dark = new T.MeshLambertMaterial({ color: 0x3a2a1c });
+  box(g, tan, 1.0, 0.42, 0.34, 0, 0.82, 0); box(g, white, 0.9, 0.14, 0.3, 0, 0.6, 0); box(g, dark, 0.8, 0.07, 0.36, 0, 0.7, 0);
+  for (const [x, z] of [[0.36, 0.11], [0.36, -0.11], [-0.36, 0.11], [-0.36, -0.11]]) box(g, tan, 0.08, 0.62, 0.08, x, 0.31, z);
+  const neck = new T.Group(); neck.position.set(0.45, 0.95, 0); g.add(neck);
+  box(neck, tan, 0.16, 0.5, 0.18, 0.08, 0.2, 0, -0.5); box(neck, tan, 0.32, 0.17, 0.17, 0.3, 0.45, 0); box(neck, white, 0.12, 0.1, 0.15, 0.42, 0.42, 0);
+  for (const z of [0.06, -0.06]) box(neck, dark, 0.03, 0.34, 0.03, 0.2, 0.68, z, 0.25);
+  box(g, white, 0.1, 0.16, 0.1, -0.52, 0.9, 0);
+  g.userData.neck = neck; return g;
+}
+function buildGator() { // facing +x
+  const g = new T.Group(), skin = new T.MeshLambertMaterial({ color: 0x3f5a2a }), belly = new T.MeshLambertMaterial({ color: 0x8a9460 }), eye = new T.MeshBasicMaterial({ color: 0xffd23a }), tooth = new T.MeshLambertMaterial({ color: 0xffffff });
+  box(g, skin, 1.7, 0.3, 0.62, 0, 0.24, 0); box(g, belly, 1.6, 0.08, 0.5, 0, 0.08, 0);
+  const tail = new T.Group(); tail.position.set(-0.85, 0.22, 0); g.add(tail); box(tail, skin, 0.9, 0.22, 0.36, -0.45, 0, 0); box(tail, skin, 0.7, 0.14, 0.18, -1.2, -0.02, 0);
+  const jaw = new T.Group(); jaw.position.set(0.85, 0.3, 0); g.add(jaw); box(jaw, skin, 0.95, 0.13, 0.42, 0.47, 0.04, 0);
+  for (let i = 0; i < 5; i++) for (const z of [0.17, -0.17]) box(jaw, tooth, 0.05, 0.07, 0.04, 0.15 + i * 0.17, -0.05, z);
+  box(g, skin, 0.95, 0.1, 0.4, 1.32, 0.17, 0); for (const z of [0.16, -0.16]) { box(g, skin, 0.14, 0.12, 0.12, 0.8, 0.44, z); box(g, eye, 0.06, 0.06, 0.13, 0.83, 0.45, z); }
+  for (const [x, z] of [[0.55, 0.38], [0.55, -0.38], [-0.55, 0.38], [-0.55, -0.38]]) box(g, skin, 0.22, 0.14, 0.3, x, 0.1, z);
+  for (let i = 0; i < 7; i++) box(g, skin, 0.12, 0.08, 0.12, -0.7 + i * 0.23, 0.42, 0);
+  g.userData.tail = tail; g.userData.jaw = jaw; g.scale.setScalar(1.5); return g;
 }
 
 export class Course3D {
@@ -153,6 +178,13 @@ export class Course3D {
     const ring = new T.Mesh(new T.RingGeometry(0.86, 1, 48), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, side: T.DoubleSide, depthWrite: false, fog: false }));
     ring.rotation.x = -Math.PI / 2; ring.visible = false; this.scene.add(ring); this.ring = ring;
     this.golfer = buildGolfer(); poseGolfer(this.golfer, 0); this.golfer.visible = false; this.scene.add(this.golfer);
+    // the other players' balls
+    this.others = [0, 1, 2].map(() => { const m = new T.Mesh(new T.SphereGeometry(0.05, 14, 10), new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0x222222 })); m.visible = false; this.scene.add(m); return m; });
+    // birds: a small flock that circles over the hole
+    this.birds = new T.Group(); this.scene.add(this.birds);
+    const wg = new T.BufferGeometry(); wg.setAttribute('position', new T.Float32BufferAttribute([0, 0, 0, 0.1, 0, 0.9, -0.35, 0, 0.5], 3));
+    this.birdMat = new T.MeshBasicMaterial({ color: 0x1c1c1c, side: T.DoubleSide, fog: false });
+    for (let i = 0; i < 8; i++) { const b = new T.Group(), l = new T.Mesh(wg, this.birdMat), r = new T.Mesh(wg, this.birdMat); r.scale.z = -1; b.add(l, r); b.userData = { l, r, ph: i * 0.9, off: [(i % 3) * 3.2 - 3, (i % 2) * 1.4, Math.floor(i / 3) * 3.4] }; this.birds.add(b); }
   }
 
   // ---- ground height (only for looks: play is worked out on the flat)
@@ -292,6 +324,35 @@ export class Course3D {
         const m = new T.Mesh(tg, tm); m.position.set(pin.x + gx, this.hAt(pin.x + gx, pin.z + gz) + 0.04, pin.z + gz); m.rotation.y = -slope.a; m.scale.setScalar(0.5 + slope.g * 0.3); this.marks.add(m);
       }
     }
+    // --- spectators around the green and a grandstand behind it
+    const prevP = hole.path[hole.path.length - 2], aL = Math.hypot(pin.x - prevP.x, pin.z - prevP.z) || 1, ax = (pin.x - prevP.x) / aL, az = (pin.z - prevP.z) / aL; // the way the hole plays into the green
+    const ppl = [];
+    for (let i = 0; i < 400 && ppl.length < 150; i++) {
+      const a = rnd() * Math.PI * 2, r = hole.greenR + 8 + rnd() * 6, x = pin.x + Math.cos(a) * r, z = pin.z + Math.sin(a) * r;
+      if (Math.cos(a) * ax + Math.sin(a) * az < -0.45) continue; // keep the approach open
+      if (hole.haz.some((q) => Math.hypot(x - q.x, z - q.z) < q.r + 2)) continue;
+      ppl.push({ x, y: this.hAt(x, z), z, s: 0.9 + rnd() * 0.25 });
+    }
+    const gsx = pin.x + ax * (hole.greenR + 21), gsz = pin.z + az * (hole.greenR + 21), gy = this.hAt(gsx, gsz), stand = new T.Group();
+    stand.position.set(gsx, gy, gsz); stand.rotation.y = Math.atan2(-az, ax); G.add(stand); // local +x points away from the green
+    const steel = new T.MeshLambertMaterial({ color: 0xdfe6ee }), navy = new T.MeshLambertMaterial({ color: 0x18305c });
+    for (let r = 0; r < 6; r++) { box(stand, r % 2 ? steel : navy, 1.1, 0.55 * (r + 1), 22, r * 1.1, 0.275 * (r + 1), 0); for (let k = 0; k < 20; k++) { const lx = r * 1.1, lz = -10.4 + k * 1.09 + (rnd() - 0.5) * 0.3, c = Math.cos(stand.rotation.y), s2 = Math.sin(stand.rotation.y); ppl.push({ x: gsx + lx * c + lz * s2, y: gy + 0.55 * (r + 1) - 0.25, z: gsz - lx * s2 + lz * c, s: 0.85 }); } }
+    box(stand, navy, 0.3, 4.2, 22.4, 6.7, 2.1, 0); box(stand, steel, 7.6, 0.18, 23, 3.1, 5.2, 0); for (const z of [-11, 11]) box(stand, steel, 0.2, 5.2, 0.2, -0.4, 2.6, z);
+    const bodyG = new T.BoxGeometry(0.42, 0.95, 0.26); bodyG.translate(0, 0.72, 0); const headG = new T.SphereGeometry(0.13, 8, 6); headG.translate(0, 1.36, 0);
+    const bodies = inst(bodyG, new T.MeshLambertMaterial({ color: 0xffffff }), ppl.length), heads = inst(headG, new T.MeshLambertMaterial({ color: 0xffffff }), ppl.length);
+    const shirts = [0xe63946, 0xf1faee, 0x457b9d, 0xffb703, 0x2a9d8f, 0xf4a261, 0x9b5de5, 0xffffff, 0x1d3557, 0xef476f], skins = [0xe0ac8a, 0x8d5a3b, 0xc68863, 0x5a3a26, 0xf0c8a8];
+    ppl.forEach((q, i) => { m4.compose(new T.Vector3(q.x, q.y, q.z), qn.identity(), new T.Vector3(q.s, q.s, q.s)); bodies.setMatrixAt(i, m4); heads.setMatrixAt(i, m4); bodies.setColorAt(i, col.set(shirts[(rnd() * shirts.length) | 0])); heads.setColorAt(i, col.set(skins[(rnd() * skins.length) | 0])); });
+    for (const m of [bodies, heads]) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; }
+    // --- animals
+    this.bucks = []; this.gatorsM = [];
+    if (TH.animals === 'buck') for (let i = 0; i < 200 && this.bucks.length < 5; i++) {
+      const x = x0 + M * 0.6 + rnd() * (W - M * 1.2), z = z0 + rnd() * D, n = nearest(hole.path, { x, z });
+      if (n.d < hole.fw / 2 + 6 || n.d > 42 || Math.hypot(x - pin.x, z - pin.z) < hole.greenR + 26 || Math.hypot(x - tee.x, z - tee.z) < 40) continue;
+      if (hole.haz.some((q) => Math.hypot(x - q.x, z - q.z) < q.r + 5) || trees.some((t) => Math.hypot(x - t.x, z - t.z) < 4)) continue;
+      const b = buildBuck(); b.position.set(x, this.hAt(x, z), z); b.rotation.y = rnd() * 6.28; b.scale.setScalar(1.05 + rnd() * 0.25); G.add(b); this.bucks.push({ g: b, ph: rnd() * 6, run: null });
+    }
+    for (const q of hole.gators || []) { const g = buildGator(), n = nearest(hole.path, q), c2 = hole.path.length ? pin : q; g.position.set(q.x, this.hAt(q.x, q.z) + 0.05, q.z); g.rotation.y = Math.atan2(-(tee.z - q.z), tee.x - q.x) + 0.5; G.add(g); this.gatorsM.push({ g, home: g.position.clone(), rot: g.rotation.y, snap: null }); }
+    this.birdMat.color.set(theme === 'links' ? 0xf4f4f4 : 0x1c1c1c); this.birdC = { x: (tee.x + pin.x) / 2, z: (tee.z + pin.z) / 2 };
     // flag and cup
     const py = this.hAt(pin.x, pin.z); this.flag.position.set(pin.x, py, pin.z); this.cup.position.set(pin.x, py + 0.02, pin.z);
     // keep the far scenery centred on this hole
@@ -311,6 +372,25 @@ export class Course3D {
     const ux = (aim.x - p.x) / d, uz = (aim.z - p.z) / d, th = Math.atan2(-uz, ux), fx = Math.sin(th), fz = Math.cos(th);
     this.golfer.rotation.y = th; this.golfer.position.set(p.x - fx * 0.86, this.hAt(p.x, p.z), p.z - fz * 0.86); poseGolfer(this.golfer, 0);
   }
+  setPlayers(shirt, others = []) { // shirt colour of the player whose turn it is, and where the other balls lie
+    this.golfer.userData.shirt.color.set(shirt);
+    this.others.forEach((m, i) => { const o = others[i]; m.visible = !!o; if (o) { m.material.color.set(o.color); m.position.set(o.p.x, this.hAt(o.p.x, o.p.z) + 0.05, o.p.z); } });
+  }
+  /** animals near where a ball has just landed: buck bolt */
+  scare(p) { let n = 0; for (const b of this.bucks || []) { const dx = b.g.position.x - p.x, dz = b.g.position.z - p.z, d = Math.hypot(dx, dz); if (d < 16 && !b.run) { b.run = { t: 0, ux: dx / (d || 1), uz: dz / (d || 1) }; n++; } } return n; }
+  gatorSnap(i, p) { const q = (this.gatorsM || [])[i]; if (q) q.snap = { t: 0, to: new T.Vector3(p.x, this.hAt(p.x, p.z) + 0.05, p.z) }; }
+  animate(dt, tt) {
+    for (const b of this.bucks || []) {
+      if (b.run) { b.run.t += dt; const v = 11 * Math.max(0, 1 - b.run.t / 3.2); b.g.position.x += b.run.ux * v * dt; b.g.position.z += b.run.uz * v * dt; b.g.position.y = this.hAt(b.g.position.x, b.g.position.z) + Math.abs(Math.sin(b.run.t * 9)) * 0.5 * (v / 11); b.g.rotation.y = Math.atan2(-b.run.uz, b.run.ux); b.g.userData.neck.rotation.z = 0.2; if (b.run.t > 3.2) b.run = null; }
+      else b.g.userData.neck.rotation.z = -0.95 + 0.75 * Math.max(0, Math.sin(tt * 0.5 + b.ph)); // grazing, looking up now and then
+    }
+    for (const q of this.gatorsM || []) {
+      q.g.userData.tail.rotation.y = 0.35 * Math.sin(tt * 1.4 + q.home.x);
+      if (q.snap) { const s = q.snap; s.t += dt; const k = s.t < 0.5 ? s.t / 0.5 : s.t < 1.6 ? 1 : Math.max(0, 1 - (s.t - 1.6) / 1.2); q.g.position.lerpVectors(q.home, s.to, k * 0.85); q.g.rotation.y = Math.atan2(-(s.to.z - q.home.z), s.to.x - q.home.x); q.g.userData.jaw.rotation.z = s.t < 0.5 ? 0.7 : s.t < 0.7 ? 0 : s.t < 1.5 ? 0.35 * Math.abs(Math.sin(s.t * 14)) : 0; if (s.t > 2.8) { q.snap = null; q.g.rotation.y = q.rot; } }
+      else q.g.userData.jaw.rotation.z = 0.12 + 0.1 * Math.sin(tt * 0.8 + q.home.z);
+    }
+    if (this.birdC) this.birds.children.forEach((b) => { const u = b.userData, a = tt * 0.16, r = 55; b.position.set(this.birdC.x + Math.cos(a) * r + u.off[0], 26 + u.off[1] + 3 * Math.sin(tt * 0.3), this.birdC.z + Math.sin(a) * r + u.off[2]); b.rotation.y = -a - Math.PI / 2; const f = 0.6 * Math.sin(tt * 7 + u.ph); u.l.rotation.x = f; u.r.rotation.x = -f; b.scale.setScalar(1.6); });
+  }
   placeBall(p, lift = 0) { const y = this.hAt(p.x, p.z); this.ball.position.set(p.x, y + 0.05 + lift, p.z); this.shadow.position.set(p.x, y + 0.03, p.z); this.bp = { x: p.x, z: p.z }; }
 
   /** Show the ball waiting at p. ringAt = where the chosen club normally finishes (or null). */
@@ -329,14 +409,14 @@ export class Course3D {
     const dist = Math.hypot(to.x - from.x, to.z - from.z);
     this.trailPts = []; this.trail.visible = true; this.ring.visible = false;
     this.anim = { kind: 'fly', t: 0, from, to, dist, apex: o.apex || clamp(dist * 0.17, 1.5, 38), dur: clamp(1.4 + dist / 52, 1.7, 5.6), carry: o.penalty ? 1 : 0.93,
-      done: !!o.done, penalty: !!o.penalty, then: o.then, cam0: this.camP.clone(), phase: -1 };
+      done: !!o.done, penalty: !!o.penalty, then: o.then, ev: o.ev || (() => {}), gator: o.gator, cam0: this.camP.clone(), phase: -1 };
     this.placeBall(from); const d0 = { x: to.x, z: to.z }; this.placeGolfer(from, d0);
   }
 
   /** Roll a putt from → to. o: { done (it dropped), then() } */
   roll(from, to, o = {}) {
     const dist = Math.hypot(to.x - from.x, to.z - from.z);
-    this.trail.visible = false; this.anim = { kind: 'roll', t: 0, from, to, dur: clamp(0.9 + dist * 0.22, 1, 3.4), done: !!o.done, then: o.then, end: false };
+    this.trail.visible = false; this.anim = { kind: 'roll', t: 0, from, to, dur: clamp(0.9 + dist * 0.22, 1, 3.4), done: !!o.done, then: o.then, ev: o.ev || (() => {}), end: false }; this.anim.ev('putt');
   }
   stepRoll(a, dt) {
     a.t += dt;
@@ -344,7 +424,7 @@ export class Course3D {
       const u = Math.min(1, a.t / a.dur), s = 1 - (1 - u) * (1 - u), x = a.from.x + (a.to.x - a.from.x) * s, z = a.from.z + (a.to.z - a.from.z) * s, y = this.hAt(x, z);
       this.ball.position.set(x, y + 0.05 - (a.done && u > 0.96 ? 0.13 : 0), z); this.shadow.position.set(x, y + 0.03, z); this.bp = { x, z };
       this.camL.lerp(new T.Vector3((x + this.flag.position.x) / 2, y + 0.2, (z + this.flag.position.z) / 2), 1 - Math.pow(0.05, dt));
-      if (u >= 1) { a.end = true; a.t = 0; }
+      if (u >= 1) { a.end = true; a.t = 0; a.ev(a.done ? 'holed' : 'stop'); }
     } else if (a.t > 0.7) {
       this.anim = null;
       if (a.done) this.golfer.visible = false;
@@ -380,6 +460,7 @@ export class Course3D {
     for (let i = 0; i < cp.count; i++) { const x = b[i * 3] + 0.4; cp.setZ(i, Math.sin(x * 7 - tt * 6) * 0.07 * x * 2.4); } cp.needsUpdate = true;
     const bd = this.cam.position.distanceTo(this.ball.position); this.ball.scale.setScalar(clamp(bd / 6.5, 1, 40)); this.shadow.scale.setScalar(clamp(bd / 6.5, 1, 40));
     this.ring.material.opacity = 0.5 + 0.25 * Math.sin(tt * 3);
+    this.animate(dt, tt); for (const m of this.others) if (m.visible) m.scale.setScalar(clamp(this.cam.position.distanceTo(m.position) / 6.5, 1, 40));
     if (this.trail.visible) this.drawTrail();
     this.r.render(this.scene, this.cam);
     if (this.tag) { // the distance label above the flag
@@ -395,7 +476,7 @@ export class Course3D {
     let bx, bz, by;
     if (a.phase === -1) { // the swing, up to the moment the club meets the ball
       poseGolfer(this.golfer, Math.min(0.62, (a.t / 0.95) * 0.62));
-      if (a.t >= 0.95) { a.phase = 0; a.t = 0; a.swing = 0.62; }
+      if (a.t >= 0.95) { a.phase = 0; a.t = 0; a.swing = 0.62; a.ev('hit'); }
       return;
     }
     if (a.swing < 1) { a.swing = Math.min(1, a.swing + dt * 0.75); poseGolfer(this.golfer, a.swing); }
@@ -405,7 +486,7 @@ export class Course3D {
       const g0 = this.hAt(from.x, from.z), g1 = this.hAt(L.x, L.z);
       by = g0 + (g1 - g0) * s + a.apex * Math.sin(Math.PI * Math.pow(s, 1.18));
       by = Math.max(by, this.hAt(bx, bz));
-      if (u >= 1) { a.phase = 1; a.t = 0; }
+      if (u >= 1) { a.phase = 1; a.t = 0; a.ev('land'); if (this.scare(to)) a.ev('hooves'); if (a.gator >= 0) this.gatorSnap(a.gator, to); }
     } else if (a.phase === 1) { // roll out
       const u = Math.min(1, a.t / 0.9), s = 1 - (1 - u) * (1 - u);
       bx = L.x + (to.x - L.x) * s; bz = L.z + (to.z - L.z) * s; by = this.hAt(bx, bz);
@@ -414,10 +495,10 @@ export class Course3D {
     } else if (a.phase === 2) { // the putts, shown as one roll into the hole
       const pin = pinOf(this.hole), u = Math.min(1, a.t / 1.5), s = ease(u);
       bx = to.x + (pin.x - to.x) * s; bz = to.z + (pin.z - to.z) * s; by = this.hAt(bx, bz) - (u > 0.97 ? 0.12 : 0);
-      if (u >= 1) { a.phase = 3; a.t = 0; }
+      if (u >= 1) { a.phase = 3; a.t = 0; a.ev('holed'); }
     } else { // pause, then hand back
       bx = this.bp.x; bz = this.bp.z; by = this.ball.position.y - 0.05;
-      if (a.t > (a.done ? 1.1 : 0.7)) {
+      if (a.t > (a.done ? 1.1 : a.gator >= 0 ? 3 : 0.7)) {
         this.anim = null; this.trail.visible = false;
         if (this.rest) {
           let to2;
