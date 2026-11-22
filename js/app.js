@@ -7,7 +7,7 @@ import { loadThree, Course3D } from './course3d.js';
 import { parseCommand } from './voice.js';
 import { saveSwing, listSwings, getSwing, deleteSwing } from './swingstore.js';
 
-const VERSION = '2.8.0';
+const VERSION = '2.9.0';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
@@ -18,7 +18,7 @@ const store = {
 };
 const DEFAULTS = {
   dist: 'm', speed: 'mph', altitude: 1750, tempC: 22, firmness: '1', voice: 'on',
-  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
+  hfov: 67, procW: '960', threshold: 14, speedCal: 0, aim: 0, camId: '', club: '7I', autoFind: 'on', debug: 'off', tips: 'on', heightCm: '', hand: 'auto', lens: 'main', view: 'face', face: 'back', camH: 1, voiceCmd: 'off', myDist: {}, autoReplay: 'on', goal: '', ballDist: '', teeSpot: null,
 };
 const S = { ...DEFAULTS, ...store.get('settings', {}) };
 const saveSettings = () => store.set('settings', S);
@@ -247,8 +247,20 @@ $('#clearBtn').addEventListener('click', () => {
 // ------------------------------------------------------------ club picker
 function renderClubs() {
   $('#clubBtn').textContent = clubById(S.club).name;
-  $('#clubGrid').innerHTML = CLUBS.map((c) => `<button data-club="${c.id}" class="${c.id === S.club ? 'on' : ''}">${c.id}<small>${c.name}</small></button>`).join('');
+  $('#clubGrid').innerHTML = CLUBS.map((c) => `<button data-club="${c.id}" class="${c.id === S.club ? 'on' : ''}">${c.id}<small>${c.name}</small><em>${fmtDist(clubAvg(c.id))} ${dUnit()}</em></button>`).join('');
+  $('#clubDist').innerHTML = CLUBS.map((c) => { const mine = S.myDist && S.myDist[c.id] > 0, n = shots.filter((s) => s.club === c.id && !s.miss && !s.demo).length;
+    return `<div class="cdist" data-cd="${c.id}"><b>${c.name}</b><button class="btn" data-step="-1" aria-label="Shorter">−</button><span class="v">${fmtDist(clubAvg(c.id))} ${dUnit()}</span><button class="btn" data-step="1" aria-label="Longer">+</button><span class="src">${mine ? 'set by you' : n >= 3 ? 'from your shots' : 'typical golfer'}</span><button class="btn ghost" data-step="0" aria-label="Back to automatic" ${mine ? '' : 'style="visibility:hidden"'}>↺</button></div>`; }).join('');
+  const bag = $('#rhBag'); if (bag) { bag.innerHTML = CLUBS.map((c) => `<option value="${c.id}">${c.name} · ${fmtDist(clubAvg(c.id))} ${dUnit()}</option>`).join(''); bag.value = S.club; }
 }
+// change how far a club goes (in steps of 5), or put it back to automatic
+$('#clubDist').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-step]'), row = e.target.closest('[data-cd]'); if (!b || !row) return;
+  const id = row.dataset.cd, step = +b.dataset.step, unit = S.dist === 'yd' ? YARD : 1;
+  S.myDist = { ...(S.myDist || {}) };
+  if (!step) delete S.myDist[id];
+  else { const cur = clubAvg(id) / unit, next = Math.max(10, Math.min(400, (step > 0 ? Math.floor(cur / 5) * 5 + 5 : Math.ceil(cur / 5) * 5 - 5))); S.myDist[id] = next * unit; }
+  saveSettings(); renderClubs(); if (round) renderRound();
+});
 $('#clubBtn').addEventListener('click', () => { renderClubs(); openSheet('#clubSheet'); });
 $('#clubGrid').addEventListener('click', (e) => {
   const b = e.target.closest('[data-club]'); if (!b) return;
@@ -2062,6 +2074,7 @@ const allCourses = () => [...COURSES, ...customCourses];
 const roundCourse = () => { const c = allCourses().find((x) => x.id === round.courseId); return c ? buildCourse(c) : null; };
 const saveRound = () => store.set('round', round);
 function clubAvg(id) {
+  if (S.myDist && S.myDist[id] > 0) return S.myDist[id]; // the distance you set yourself wins
   const a = shots.filter((s) => s.club === id && !s.miss && !s.demo).map((s) => s.total);
   if (a.length >= 3) return trimmed(a);
   // until you have your own numbers: a typical club golfer (about 80% of tour ball speed), through the app's own flight model
